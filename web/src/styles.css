@@ -1,1 +1,185 @@
 @import "tailwindcss";
+
+/* Color tokens as RGB channels, so CSS and SVG can write rgb(var(--ink) / 0.14). Light by default, like rivet.dev. */
+:root {
+	--paper: 239 239 239;
+	--surface: 255 255 255;
+	--ink: 27 25 22;
+	--ink-soft: 64 61 57;
+	--ink-faint: 110 107 102;
+	--highlight: 214 70 58;
+
+	--iso-top: rgb(var(--surface));
+	--iso-wall-l: color-mix(in srgb, rgb(var(--ink)) 6%, rgb(var(--surface)));
+	--iso-wall-r: color-mix(in srgb, rgb(var(--ink)) 12%, rgb(var(--surface)));
+	--iso-lip: color-mix(in srgb, white 24%, rgb(var(--surface)));
+	--iso-tile: color-mix(in srgb, rgb(var(--ink)) 9%, rgb(var(--surface)));
+	--iso-ground: rgb(0 0 0 / 0.16);
+
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--paper: 10 10 11;
+		--surface: 12 12 14;
+		--ink: 255 255 255;
+		--ink-soft: 212 212 216;
+		--ink-faint: 162 162 170;
+
+		/* On a dark page the slabs are lit ink over surface; walls are darker than the top. */
+		--iso-top: color-mix(in srgb, rgb(var(--ink)) 13%, rgb(var(--surface)));
+		--iso-wall-l: color-mix(in srgb, rgb(var(--ink)) 8%, rgb(var(--surface)));
+		--iso-wall-r: color-mix(in srgb, rgb(var(--ink)) 5%, rgb(var(--surface)));
+		--iso-lip: rgb(var(--ink) / 0.12);
+		--iso-tile: color-mix(in srgb, rgb(var(--ink)) 20%, rgb(var(--surface)));
+		--iso-ground: rgb(0 0 0 / 0.6);
+
+		color-scheme: dark;
+	}
+}
+
+@theme inline {
+	--color-paper: rgb(var(--paper));
+	--color-surface: rgb(var(--surface));
+	--color-ink: rgb(var(--ink));
+	--color-ink-soft: rgb(var(--ink-soft));
+	--color-ink-faint: rgb(var(--ink-faint));
+	--color-highlight: rgb(var(--highlight));
+	/* White text on the plain accent is under 4.5:1, so filled buttons use a deeper shade. */
+	--color-highlight-deep: color-mix(in srgb, black 12%, rgb(var(--highlight)));
+}
+
+@theme {
+	--font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--animate-ring: ring 1.6s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+	--animate-breathe: breathe 1.6s ease-in-out infinite;
+
+	@keyframes ring {
+		0% {
+			transform: scale(1);
+			opacity: 0.7;
+		}
+		100% {
+			transform: scale(2.4);
+			opacity: 0;
+		}
+	}
+
+	@keyframes breathe {
+		50% {
+			opacity: 0.35;
+		}
+	}
+}
+
+@layer base {
+	body {
+		background-color: var(--color-paper);
+		color: var(--color-ink);
+		font-family: var(--font-sans);
+		-webkit-font-smoothing: antialiased;
+	}
+}
+
+/* Isometric drawings (web/src/iso.ts). */
+@layer components {
+	.iso-neutral .iso-top {
+		fill: var(--iso-top);
+	}
+	.iso-neutral .iso-wall-l {
+		fill: var(--iso-wall-l);
+	}
+	.iso-neutral .iso-wall-r {
+		fill: var(--iso-wall-r);
+	}
+	.iso-accent .iso-top {
+		fill: rgb(var(--highlight));
+	}
+	.iso-accent .iso-wall-l {
+		fill: color-mix(in srgb, black 12%, rgb(var(--highlight)));
+	}
+	.iso-accent .iso-wall-r {
+		fill: color-mix(in srgb, black 24%, rgb(var(--highlight)));
+	}
+	.iso-shade {
+		fill: url(#iso-wall-shade);
+	}
+	.iso-sheen {
+		fill: url(#iso-top-sheen);
+	}
+	.iso-top,
+	.iso-edge {
+		stroke: rgb(var(--ink) / 0.14);
+		stroke-width: 0.75;
+		stroke-linejoin: round;
+	}
+	.iso-edge {
+		fill: none;
+	}
+	.iso-lip {
+		fill: none;
+		stroke: var(--iso-lip);
+		stroke-width: 1;
+	}
+	.iso-accent .iso-lip {
+		stroke: color-mix(in srgb, white 30%, rgb(var(--highlight)));
+	}
+	.iso-ground {
+		fill: var(--iso-ground);
+		filter: url(#iso-blur-ground);
+	}
+	.iso-tile {
+		fill: var(--iso-tile);
+	}
+	.iso-tile-future {
+		fill: rgb(var(--ink) / 0.06);
+		stroke: rgb(var(--ink) / 0.14);
+		stroke-width: 0.75;
+	}
+	.iso-glow {
+		fill: rgb(var(--highlight));
+		opacity: 0.35;
+		filter: url(#iso-blur-tight);
+	}
+	.iso-waiting {
+		fill: rgb(var(--highlight) / 0.08);
+		stroke: rgb(var(--highlight));
+		stroke-width: 1.2;
+		stroke-dasharray: 4 3;
+		animation: iso-dash 0.9s linear infinite;
+	}
+	.iso-waiting-halo {
+		fill: none;
+		stroke: rgb(var(--highlight));
+		stroke-width: 0.8;
+		animation: breathe 1.6s ease-in-out infinite;
+	}
+	/* A newly raised tile rises out of the slab. */
+	.iso-rise {
+		animation: iso-rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+	}
+
+	@keyframes iso-dash {
+		to {
+			stroke-dashoffset: -7;
+		}
+	}
+	@keyframes iso-rise {
+		from {
+			transform: translateY(5px);
+			opacity: 0.3;
+		}
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none !important;
+		transition: none !important;
+	}
+}
