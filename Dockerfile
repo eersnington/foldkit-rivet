@@ -4,7 +4,8 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml rivetkit-effect-pr1800.tgz ./
 
-# Builds the Foldkit frontend to web/dist.
+# Builds the Effect UI frontend to web/dist. `@effect/ui` comes from pkg.pr.new,
+# so this install needs network access.
 FROM base AS web
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./

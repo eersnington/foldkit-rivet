@@ -40,7 +40,7 @@ const getToken: NonNullable<Client.Options["getToken"]> = async ({
 };
 
 /** One Rivet client for the app. A config that cannot load crashes the app. */
-export const resources = Layer.unwrap(
+export const clientLayer = Layer.unwrap(
 	Effect.gen(function* () {
 		const config = yield* fetchClientConfig;
 		const token = yield* Effect.tryPromise(() => fetchToken(false));
@@ -52,5 +52,7 @@ export const counter = Counter.client.pipe(
 	Effect.map((client) => client.getOrCreate(COUNTER_KEY)),
 );
 
-export const order = (key: string) =>
-	Order.client.pipe(Effect.map((client) => client.getOrCreate(key)));
+/** Gives a handle to the order with a key. */
+export const order = Order.client.pipe(
+	Effect.map((client) => (key: string) => client.getOrCreate(key)),
+);

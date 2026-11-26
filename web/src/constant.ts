@@ -27,3 +27,6 @@ export const RECONNECT_AFTER_SLEEP_MS = 1500;
 
 /** How long the screen takes to switch off before the page reloads. */
 export const POWER_OFF_MS = 320;
+
+/** The page title, and the name in the top bar. */
+export const TITLE = "Rivet × Effect UI";

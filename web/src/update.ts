@@ -1,10 +1,7 @@
-import type { Client } from "@rivetkit/effect";
+import { UiStruct } from "@effect/ui";
 import { Array, Option } from "effect";
-import type { Update } from "foldkit";
-import { UrlRequest } from "foldkit/navigation";
-import { modifyFields } from "foldkit/struct";
-import { toString as urlToString } from "foldkit/url";
 import type { OrderStep } from "../../shared/api.ts";
+import { AppDef } from "./app.ts";
 import {
 	BURST_SIZE,
 	MAX_FEED_EVENTS,
@@ -16,9 +13,7 @@ import {
 	GenerateOrderKey,
 	Increment,
 	LoadCount,
-	LoadExternal,
 	LoadOrder,
-	NavigateInternal,
 	OpenClient,
 	PlayCue,
 	ReloadPage,
@@ -37,8 +32,7 @@ import {
 	type OrderRun,
 	settingsOf,
 } from "./model.ts";
-import { urlToAppRoute } from "./route.ts";
-import { Cue, type SpeakerService } from "./sound.ts";
+import { Cue } from "./sound.ts";
 import { WORKFLOW } from "./source.ts";
 import {
 	currentIndex,
@@ -47,27 +41,37 @@ import {
 	startOffsetMs,
 } from "./workflow.ts";
 
-type UpdateReturn = Update.Return<
-	Model,
-	Message,
-	Client.Client | SpeakerService
->;
-
 const withError = (model: Model, error: string): Model =>
-	modifyFields(model, { maybeError: () => Option.some(error) });
+	UiStruct.evolve(model, { maybeError: Option.some(error) });
 
 /** The second window saves nothing, so it never changes the first window's settings. */
 const saveSettings = (model: Model) =>
-	model.isSecondWindow ? [] : [SaveSettings({ settings: settingsOf(model) })];
+	model.isSecondWindow
+		? []
+		: [SaveSettings.make({ settings: settingsOf(model) })];
 
-const playCue = (cue: Cue) => PlayCue({ cue });
+const playCue = (cue: Cue) => PlayCue.make({ cue });
+
+/** Every Command that `update` runs. */
+type AppCommand =
+	| ReturnType<typeof GenerateOrderKey.make>
+	| ReturnType<typeof Increment.make>
+	| ReturnType<typeof LoadCount.make>
+	| ReturnType<typeof LoadOrder.make>
+	| ReturnType<typeof OpenClient.make>
+	| ReturnType<typeof PlayCue.make>
+	| ReturnType<typeof ReloadPage.make>
+	| ReturnType<typeof SaveSettings.make>
+	| ReturnType<typeof StopActor.make>
+	| ReturnType<typeof TimestampFeedEvent.make>
+	| ReturnType<typeof WaitForSleepEnd.make>;
 
 // COUNTER
 
 const withCounter = (
 	model: Model,
 	change: (counter: CounterState) => CounterState,
-): Model => modifyFields(model, { counter: change });
+): Model => UiStruct.evolve(model, { counter: change });
 
 /**
  * A call result and an event can arrive in either order. The count only
@@ -75,7 +79,7 @@ const withCounter = (
  * means the counter answers again, so the last error goes.
  */
 const withCount = (model: Model, count: number): Model => {
-	const counter = modifyFields(model.counter, {
+	const counter = UiStruct.evolve(model.counter, {
 		maybeCount: (maybeCount) =>
 			Option.some(
 				Math.max(
@@ -84,7 +88,7 @@ const withCount = (model: Model, count: number): Model => {
 				),
 			),
 	});
-	return modifyFields(model, {
+	return UiStruct.evolve(model, {
 		counter: () => counter,
 		maybeError: () => Option.none(),
 	});
@@ -104,7 +108,7 @@ const withOrderSteps = (
 	latestFrom: OrderRun["latestFrom"],
 	sleptMsSince: (at: number) => number,
 ): Model =>
-	modifyFields(model, {
+	UiStruct.evolve(model, {
 		orders: (orders) =>
 			orders.map((run) => {
 				if (run.key !== key) {
@@ -167,7 +171,7 @@ const withRun = (
 	key: string,
 	change: (run: OrderRun) => OrderRun,
 ): Model =>
-	modifyFields(model, {
+	UiStruct.evolve(model, {
 		orders: (orders) =>
 			orders.map((run) => (run.key === key ? change(run) : run)),
 	});
@@ -186,84 +190,72 @@ const sleepingAtMs = (run: OrderRun, now: number) => {
 
 // UPDATE
 
-export const update = (model: Model, message: Message): UpdateReturn =>
-	Message.match<UpdateReturn>(message, {
+export const update = AppDef.update(($, message) => {
+	const model = $.model;
+	const next = (
+		nextModel: Model,
+		commands: ReadonlyArray<AppCommand> = [],
+	) => $.set(nextModel).run(...commands);
+
+	return Message.match(message, {
 		// Page
 
-		ClickedLink: ({ request }) =>
-			UrlRequest.match<UpdateReturn>(request, {
-				Internal: ({ url }) => ({
-					model,
-					commands: [
-						NavigateInternal({ url: urlToString(url) }),
-						playCue(Cue.Tick()),
-					],
-				}),
-				External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
-			}),
-		ChangedUrl: ({ url }) => ({
-			model: modifyFields(model, { route: () => urlToAppRoute(url) }),
-		}),
-		CompletedNavigateInternal: () => ({ model }),
-		CompletedLoadExternal: () => ({ model }),
-		InteractedWithPage: () => ({
-			model: modifyFields(model, { hasInteracted: () => true }),
-		}),
+		// The Router followed a link. The tab click already played its tick.
+		ChangedRoute: ({ route }) =>
+			next(UiStruct.evolve(model, { route: () => route })),
+		ClickedTab: () => next(model, [playCue(Cue.Tick())]),
+		InteractedWithPage: () =>
+			next(UiStruct.evolve(model, { hasInteracted: true })),
 		ClickedSound: () => {
-			const next = modifyFields(model, {
+			const soundChanged = UiStruct.evolve(model, {
 				isSoundOn: (isSoundOn) => !isSoundOn,
 			});
-			return {
-				model: next,
-				commands: [...saveSettings(next), playCue(Cue.Tick())],
-			};
+			return next(soundChanged, [
+				...saveSettings(soundChanged),
+				playCue(Cue.Tick()),
+			]);
 		},
-		CompletedSaveSettings: () => ({ model }),
-		AcquiredSpeaker: () => ({ model }),
-		ReleasedSpeaker: () => ({ model }),
-		// Sound is optional, so the page works on without it.
-		FailedAcquireSpeaker: () => ({ model }),
-		CompletedPlayCue: () => ({ model }),
-		TimestampedFeedEvent: ({ event }) => ({
-			model: modifyFields(model, {
-				feed: (feed) => [event, ...feed].slice(0, MAX_FEED_EVENTS),
-			}),
-		}),
+		TimestampedFeedEvent: ({ event }) =>
+			next(
+				UiStruct.evolve(model, {
+					feed: (feed) => [event, ...feed].slice(0, MAX_FEED_EVENTS),
+				}),
+			),
 
 		// Counter
 
-		ClickedIncrement: () => ({
-			model: withCounter(model, (counter) =>
-				modifyFields(counter, {
-					pendingIncrements: (pending) => pending + 1,
-					presses: (presses) => presses + 1,
-				}),
+		ClickedIncrement: () =>
+			next(
+				withCounter(model, (counter) =>
+					UiStruct.evolve(counter, {
+						pendingIncrements: (pending) => pending + 1,
+						presses: (presses) => presses + 1,
+					}),
+				),
+				[Increment.make({ maybeBurstId: Option.none() })],
 			),
-			commands: [Increment({ maybeBurstId: Option.none() })],
-		}),
 		ClickedBurst: () => {
 			const id = model.counter.bursts;
-			return {
-				model: withCounter(model, (counter) =>
-					modifyFields(counter, {
+			return next(
+				withCounter(model, (counter) =>
+					UiStruct.evolve(counter, {
 						pendingIncrements: (pending) => pending + BURST_SIZE,
 						bursts: (bursts) => bursts + 1,
 						maybeBurst: () => Option.some({ id, results: [] }),
 					}),
 				),
-				// The runtime runs the Commands of one batch concurrently.
-				commands: [
+				// `Increment` runs concurrently, so the calls of one burst overlap.
+				[
 					playCue(Cue.Tick()),
 					...Array.makeBy(BURST_SIZE, () =>
-						Increment({ maybeBurstId: Option.some(id) }),
+						Increment.make({ maybeBurstId: Option.some(id) }),
 					),
 				],
-			};
+			);
 		},
-		ClickedOpenClient: () => ({ model, commands: [OpenClient()] }),
-		CompletedOpenClient: () => ({ model }),
-		SucceededLoadCount: ({ count }) => ({ model: withCount(model, count) }),
-		FailedLoadCount: ({ error }) => ({ model: withError(model, error) }),
+		ClickedOpenClient: () => next(model, [OpenClient.make()]),
+		SucceededLoadCount: ({ count }) => next(withCount(model, count)),
+		FailedLoadCount: ({ error }) => next(withError(model, error)),
 		SucceededIncrement: ({ count, tookMs, maybeBurstId }) => {
 			const result = { count, tookMs };
 			const maybeBurst = Option.filter(model.counter.maybeBurst, (burst) =>
@@ -274,9 +266,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 				onNone: () => Cue.Note({ degree: count }),
 				onSome: (burst) => Cue.Note({ degree: burst.results.length }),
 			});
-			return {
-				model: withCounter(withCount(model, count), (counter) =>
-					modifyFields(counter, {
+			return next(
+				withCounter(withCount(model, count), (counter) =>
+					UiStruct.evolve(counter, {
 						recentCalls: (calls) => [...calls, result].slice(-MAX_RECENT_CALLS),
 						maybeBurst: (current) =>
 							Option.isSome(maybeBurst)
@@ -287,69 +279,70 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 								: current,
 					}),
 				),
-				commands: [playCue(cue)],
-			};
+				[playCue(cue)],
+			);
 		},
-		FailedIncrement: ({ error }) => ({
-			model: withCounter(withError(model, error), (counter) =>
-				modifyFields(counter, {
-					pendingIncrements: (pending) => Math.max(0, pending - 1),
-				}),
+		FailedIncrement: ({ error }) =>
+			next(
+				withCounter(withError(model, error), (counter) =>
+					UiStruct.evolve(counter, {
+						pendingIncrements: (pending) => Math.max(0, pending - 1),
+					}),
+				),
 			),
-		}),
 		// Events sent while the connection was down are lost, so read again.
-		ConnectedCounter: () => ({
-			model: modifyFields(model, {
-				connection: () => ConnectionState.Connected(),
-			}),
-			commands: [LoadCount()],
-		}),
+		ConnectedCounter: () =>
+			next(
+				UiStruct.evolve(model, {
+					connection: () => ConnectionState.Connected(),
+				}),
+				[LoadCount.make()],
+			),
 		// An event that no call of this page waits for came from another client.
 		ChangedCount: ({ count }) => {
 			const isRemote = model.counter.pendingIncrements === 0;
-			return {
-				model: withCounter(withCount(model, count), (counter) =>
-					modifyFields(counter, {
+			return next(
+				withCounter(withCount(model, count), (counter) =>
+					UiStruct.evolve(counter, {
 						pendingIncrements: (pending) => Math.max(0, pending - 1),
 						maybeLastChange: () => Option.some({ count, isRemote }),
 					}),
 				),
-				commands: [
-					TimestampFeedEvent({
+				[
+					TimestampFeedEvent.make({
 						name: "CountChanged",
 						text: `{ count: ${count} }`,
 						source: isRemote ? "another window" : "this window",
 					}),
 					...(isRemote ? [playCue(Cue.Echo({ degree: count }))] : []),
 				],
-			};
+			);
 		},
-		FailedCounterConnection: ({ error }) => ({
-			model: modifyFields(withError(model, error), {
-				connection: () => ConnectionState.Disconnected(),
-			}),
-		}),
+		FailedCounterConnection: ({ error }) =>
+			next(
+				UiStruct.evolve(withError(model, error), {
+					connection: () => ConnectionState.Disconnected(),
+				}),
+			),
 
 		// Order
 
-		ClickedStartOrder: () => ({
-			model,
-			commands: [GenerateOrderKey(), playCue(Cue.Tick())],
-		}),
+		ClickedStartOrder: () =>
+			next(model, [GenerateOrderKey.make(), playCue(Cue.Tick())]),
 		// The subscription connects to the new order, and that starts its workflow.
 		GeneratedOrderKey: ({ key }) => {
-			const next = modifyFields(model, {
+			const withNewRun = UiStruct.evolve(model, {
 				orders: (orders) => [newRun(key), ...orders].slice(0, MAX_ORDERS),
 			});
-			return { model: next, commands: saveSettings(next) };
+			return next(withNewRun, saveSettings(withNewRun));
 		},
-		ClickedReload: () => ({
-			model: modifyFields(model, { isReloading: () => true }),
-			commands: [playCue(Cue.PowerDown()), ReloadPage()],
-		}),
-		CompletedReloadPage: () => ({ model }),
+		ClickedReload: () =>
+			next(UiStruct.evolve(model, { isReloading: true }), [
+				playCue(Cue.PowerDown()),
+				ReloadPage.make(),
+			]),
 		// The saved steps are the source of truth after a connect or a reload.
-		ConnectedOrder: ({ key }) => ({ model, commands: [LoadOrder({ key })] }),
+		ConnectedOrder: ({ key }) => next(model, [LoadOrder.make({ key })]),
 		SucceededLoadOrder: ({ key, steps, wokeAt, loadedAt }) => {
 			const loaded = withOrderSteps(model, key, steps, "read", (at) =>
 				Math.max(0, loadedAt - at),
@@ -361,35 +354,30 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 					isStopped(run) &&
 					wokeAt.length > run.wokeAt.length,
 			);
-			return {
-				model: withRun(loaded, key, (run) => ({
-					...run,
-					isKnown: true,
-					wokeAt,
-				})),
-				commands: hasRestarted ? [playCue(Cue.Note({ degree: 7 }))] : [],
-			};
+			return next(
+				withRun(loaded, key, (run) => ({ ...run, isKnown: true, wokeAt })),
+				hasRestarted ? [playCue(Cue.Note({ degree: 7 }))] : [],
+			);
 		},
-		FailedLoadOrder: ({ error }) => ({ model: withError(model, error) }),
-		ChangedOrderStatus: ({ key, step }) => ({
-			model: withOrderSteps(model, key, [step], "event", () => 0),
-			commands: [
-				TimestampFeedEvent({
+		FailedLoadOrder: ({ error }) => next(withError(model, error)),
+		ChangedOrderStatus: ({ key, step }) =>
+			next(withOrderSteps(model, key, [step], "event", () => 0), [
+				TimestampFeedEvent.make({
 					name: "StatusChanged",
 					text: `{ status: "${step.status}" }`,
 					source: key,
 				}),
 				playCue(stepCue(step.status)),
-			],
-		}),
+			]),
 		// The connection of a stopped actor closes. That is the point, not an error.
-		FailedOrderConnection: ({ key, error }) => ({
-			model: model.orders.some(
-				(run) => run.key === key && (run.isDisconnected || isStopped(run)),
-			)
-				? model
-				: withError(model, error),
-		}),
+		FailedOrderConnection: ({ key, error }) =>
+			next(
+				model.orders.some(
+					(run) => run.key === key && (run.isDisconnected || isStopped(run)),
+				)
+					? model
+					: withError(model, error),
+			),
 		// The page lets go of its connection first, so no client wakes the actor.
 		ClickedStopActor: () =>
 			Option.match(
@@ -401,21 +389,19 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 						!isStopped(run),
 				),
 				{
-					onNone: () => ({ model }),
-					onSome: ({ key }) => ({
-						model: withRun(model, key, (run) => ({
-							...run,
-							isDisconnected: true,
-						})),
-						commands: [StopActor({ key }), playCue(Cue.PowerDown())],
-					}),
+					onNone: () => next(model),
+					onSome: ({ key }) =>
+						next(
+							withRun(model, key, (run) => ({ ...run, isDisconnected: true })),
+							[StopActor.make({ key }), playCue(Cue.PowerDown())],
+						),
 				},
 			),
 		SucceededStopActor: ({ key, stoppedAt }) =>
 			Option.match(
 				Option.fromNullishOr(model.orders.find((run) => run.key === key)),
 				{
-					onNone: () => ({ model }),
+					onNone: () => next(model),
 					onSome: (run) => {
 						const wakesBefore = run.wokeAt.length;
 						const sleep = currentSleep(run.steps);
@@ -424,50 +410,54 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 							sleep === undefined
 								? 0
 								: Math.max(0, latestAt + sleep.durationMs - stoppedAt);
-						return {
-							model: withRun(model, key, (current) => ({
+						return next(
+							withRun(model, key, (current) => ({
 								...current,
 								maybeStop: Option.map(
 									sleepingAtMs(current, stoppedAt),
 									(atMs) => ({ atMs, wakesBefore }),
 								),
 							})),
-							commands: [
-								WaitForSleepEnd({
+							[
+								WaitForSleepEnd.make({
 									key,
 									wakesBefore,
 									delayMs: sleepEndsInMs + RECONNECT_AFTER_SLEEP_MS,
 								}),
 							],
-						};
+						);
 					},
 				},
 			),
-		FailedStopActor: ({ error }) => ({
-			model: modifyFields(withError(model, error), {
-				orders: (orders) =>
-					orders.map((run) => ({ ...run, isDisconnected: false })),
-			}),
-		}),
+		FailedStopActor: ({ error }) =>
+			next(
+				UiStruct.evolve(withError(model, error), {
+					orders: (orders) =>
+						orders.map((run) => ({ ...run, isDisconnected: false })),
+				}),
+			),
 		ClickedReconnect: () =>
 			Option.match(
 				Option.filter(followedOrder(model), (run) => run.isDisconnected),
 				{
-					onNone: () => ({ model }),
-					onSome: ({ key }) => ({
-						model: withRun(model, key, (run) => ({
-							...run,
-							isDisconnected: false,
-						})),
-					}),
+					onNone: () => next(model),
+					onSome: ({ key }) =>
+						next(
+							withRun(model, key, (run) => ({ ...run, isDisconnected: false })),
+						),
 				},
 			),
 		// The sleep is over, so RivetKit has woken the actor by now. The page connects to look.
-		CompletedWaitForSleepEnd: ({ key, wakesBefore }) => ({
-			model: withRun(model, key, (run) =>
-				Option.exists(run.maybeStop, (stop) => stop.wakesBefore === wakesBefore)
-					? { ...run, isDisconnected: false }
-					: run,
+		CompletedWaitForSleepEnd: ({ key, wakesBefore }) =>
+			next(
+				withRun(model, key, (run) =>
+					Option.exists(
+						run.maybeStop,
+						(stop) => stop.wakesBefore === wakesBefore,
+					)
+						? { ...run, isDisconnected: false }
+						: run,
+				),
 			),
-		}),
 	});
+});

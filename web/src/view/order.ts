@@ -1,5 +1,4 @@
 import { Option } from "effect";
-import type { Html, HtmlBuilder } from "foldkit/html";
 import type { OrderStep } from "../../../shared/api.ts";
 import { Message } from "../message.ts";
 import {
@@ -26,18 +25,20 @@ import {
 } from "../workflow.ts";
 import {
 	type Bar,
-	codeCardView,
-	feedView,
+	CodeCard,
+	Feed,
 	type LineMark,
 	PLAIN_BLOCK,
 	sourceLinkOf,
 } from "./code.ts";
 import {
-	captionView,
-	codeWord,
+	Caption,
+	CodeWord,
 	focusClass,
 	formatSeconds,
-	kickerView,
+	type H,
+	Kicker,
+	type Node,
 	primaryClass,
 } from "./shared.ts";
 
@@ -70,8 +71,8 @@ const lineDataOf = (steps: ReadonlyArray<OrderStep>) =>
 
 /** The progress of a sleep, as a CSS animation that starts where the sleep is now. */
 const sleepTiming = (run: OrderRun, sleep: SleepLine) => ({
-	"animation-duration": `${sleep.durationMs}ms`,
-	"animation-delay": `-${run.sleptMs}ms`,
+	animationDuration: `${sleep.durationMs}ms`,
+	animationDelay: `-${run.sleptMs}ms`,
 });
 
 /** When the first step finished, in Unix ms. Later steps show the time since then. */
@@ -135,27 +136,23 @@ const momentsIn = (
 ];
 
 /** A tick on a sleep's bar where a moment happened. `className` is the bar's mark class. */
-const momentView = (
+const MomentTick = (
+	h: H,
 	moment: Moment,
 	className: "joined" | "tl-joined",
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.span(
-		[
-			...(className === "joined"
-				? [
-						h.DataAttribute(
-							"badge",
-							moment.kind === "reloaded" ? "resumed" : "stopped",
-						),
-					]
-				: []),
-			h.Title(MOMENT_TITLE[moment.kind]),
-			h.Class(`${className} ${className}-${moment.kind}`),
-			h.Style({ left: `${moment.fraction * 100}%` }),
-		],
-		[],
-	);
+): Node =>
+	h.span
+		.attr(
+			"data-badge",
+			className === "joined"
+				? moment.kind === "reloaded"
+					? "resumed"
+					: "stopped"
+				: undefined,
+		)
+		.attr("title", MOMENT_TITLE[moment.kind])
+		.class(className, `${className}-${moment.kind}`)
+		.style({ left: `${moment.fraction * 100}%` });
 
 /** The run's latest step, if an event brought it while the page watched. */
 const liveStep = (run: OrderRun): Option.Option<OrderStep> =>
@@ -164,140 +161,107 @@ const liveStep = (run: OrderRun): Option.Option<OrderStep> =>
 		: Option.none();
 
 /** The seconds left of a sleep, counted by CSS from the same clock as its fill. */
-const countdownView = (
-	run: OrderRun,
-	sleep: SleepLine,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.span(
-		[
-			h.Class("countdown"),
-			h.Style({
-				...sleepTiming(run, sleep),
-				"--from": `${Math.round(sleep.durationMs / 100)}`,
-			}),
-		],
-		[],
-	);
+const Countdown = (h: H, run: OrderRun, sleep: SleepLine): Node =>
+	h.span.class("countdown").style({
+		...sleepTiming(run, sleep),
+		"--from": `${Math.round(sleep.durationMs / 100)}`,
+	});
 
 // MARKS ON THE CODE
 
 /** A flash behind a line that just ran. `delay` matches when the bar gets there. */
-const flashView = (
-	key: string,
-	delay: "via" | "call",
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.keyed("span")(
-		key,
-		[h.AriaHidden(true), h.Class(`under flash flash-${delay}`)],
-		[],
-	);
+const Flash = (h: H, key: string, delay: "via" | "call"): Node =>
+	h.span
+		.key(key)
+		.attr("aria-hidden", "true")
+		.class("under flash", `flash-${delay}`);
 
-const stepMark = (
-	run: OrderRun,
-	step: StepLine,
-	h: HtmlBuilder<Message>,
-): LineMark => {
+const stepMark = (h: H, run: OrderRun, step: StepLine): LineMark => {
 	const isLive = Option.exists(
 		liveStep(run),
 		({ status }) => status === step.status,
 	);
 	return {
 		isDone: true,
-		under: isLive
-			? [flashView(`flash-${run.key}-${step.status}`, "via", h)]
-			: [],
+		under: isLive ? [Flash(h, `flash-${run.key}-${step.status}`, "via")] : [],
 		maybeNote: Option.none(),
 	};
 };
 
 /** The sleep the workflow is in fills with dither in real time. */
 const sleepingMark = (
+	h: H,
 	run: OrderRun,
 	sleep: SleepLine,
 	index: number,
-	h: HtmlBuilder<Message>,
-): LineMark => {
-	const timing = h.Style(sleepTiming(run, sleep));
-	// After a live step the fill shows once the bar has arrived on the line.
-	const arrival = Option.isSome(liveStep(run)) ? "arrive-late" : "";
-	return {
-		isDone: false,
-		under: [
-			h.keyed("span")(
-				`sleep-${run.key}-${index}`,
-				[h.AriaHidden(true), h.Class(`under ${arrival}`)],
-				[
-					h.span(
-						[h.Class("sleep-track")],
-						[h.span([h.Class("sleep-fill"), timing], [])],
-					),
-					...momentsIn(run, sleep, index).map((moment) =>
-						momentView(moment, "joined", h),
-					),
-				],
+): LineMark => ({
+	isDone: false,
+	under: [
+		h.span
+			.key(`sleep-${run.key}-${index}`)
+			.attr("aria-hidden", "true")
+			// After a live step the fill shows once the bar has arrived on the line.
+			.class("under", Option.isSome(liveStep(run)) && "arrive-late")
+			.children(
+				h.span
+					.class("sleep-track")
+					.children(h.span.class("sleep-fill").style(sleepTiming(run, sleep))),
+				momentsIn(run, sleep, index).map((moment) =>
+					MomentTick(h, moment, "joined"),
+				),
 			),
-		],
-		maybeNote: Option.none(),
-	};
-};
+	],
+	maybeNote: Option.none(),
+});
 
 const sleptMark = (
+	h: H,
 	run: OrderRun,
 	sleep: SleepLine,
 	index: number,
-	h: HtmlBuilder<Message>,
 ): LineMark => ({
 	isDone: true,
 	under: [
-		h.span(
-			[h.AriaHidden(true), h.Class("under")],
-			[
-				h.span([h.Class("slept-fill")], []),
-				...momentsIn(run, sleep, index).map((moment) =>
-					momentView(moment, "joined", h),
+		h.span
+			.attr("aria-hidden", "true")
+			.class("under")
+			.children(
+				h.span.class("slept-fill"),
+				momentsIn(run, sleep, index).map((moment) =>
+					MomentTick(h, moment, "joined"),
 				),
-			],
-		),
+			),
 	],
 	maybeNote: Option.none(),
 });
 
 /** The event the latest live step sent, at the end of the broadcast line. */
-const broadcastMark = (
-	run: OrderRun,
-	h: HtmlBuilder<Message>,
-): Option.Option<LineMark> =>
+const broadcastMark = (h: H, run: OrderRun): Option.Option<LineMark> =>
 	Option.map(liveStep(run), ({ status }) => ({
 		isDone: false,
-		under: [flashView(`broadcast-${run.key}-${status}`, "call", h)],
+		under: [Flash(h, `broadcast-${run.key}-${status}`, "call")],
 		maybeNote: Option.some(
-			h.keyed("span")(
-				`sent-${run.key}-${status}`,
-				[h.Class("text-orange-text appear-call")],
-				[`→ "${status}"`],
-			),
+			h.span
+				.key(`sent-${run.key}-${status}`)
+				.class("text-orange-text appear-call")
+				.children(`→ "${status}"`),
 		),
 	}));
 
-const marksOf = (
-	run: OrderRun,
-	h: HtmlBuilder<Message>,
-): ReadonlyMap<number, LineMark> => {
+const marksOf = (h: H, run: OrderRun): ReadonlyMap<number, LineMark> => {
 	const current = currentIndex(run.steps);
 	const workflowMarks = WORKFLOW.flatMap((line, index) => {
 		const state = lineState(index, current);
 		if (line.kind === "step") {
 			return state === "done"
-				? [[line.lineNumber, stepMark(run, line, h)] as const]
+				? [[line.lineNumber, stepMark(h, run, line)] as const]
 				: [];
 		}
 		switch (state) {
 			case "current":
-				return [[line.lineNumber, sleepingMark(run, line, index, h)] as const];
+				return [[line.lineNumber, sleepingMark(h, run, line, index)] as const];
 			case "done":
-				return [[line.lineNumber, sleptMark(run, line, index, h)] as const];
+				return [[line.lineNumber, sleptMark(h, run, line, index)] as const];
 			case "pending":
 				return [];
 		}
@@ -305,10 +269,7 @@ const marksOf = (
 	return new Map([
 		...workflowMarks,
 		...Option.toArray(
-			Option.map(
-				broadcastMark(run, h),
-				(mark) => [BROADCAST_LINE, mark] as const,
-			),
+			Option.map(broadcastMark(h, run), (mark) => [BROADCAST_LINE, mark] as const),
 		),
 	]);
 };
@@ -367,32 +328,26 @@ const stepWord = (step: StepLine) =>
  * A step as a row: a box that fills when it is done, its name, and when it
  * finished, in seconds since the first step.
  */
-const stepRowView = (
+const StepRow = (
+	h: H,
 	steps: ReadonlyArray<OrderStep>,
 	step: StepLine,
-	h: HtmlBuilder<Message>,
-): Html => {
+): Node => {
 	const at = finishedAt(steps, step.status);
 	const isDone = at !== undefined;
-	return h.li(
-		[h.Class(`tl-row tl-step ${isDone ? "" : "tl-pending"}`)],
-		[
-			h.keyed("span")(
-				isDone ? "done" : "open",
-				[
-					h.AriaHidden(true),
-					h.Class(`tl-box ${isDone ? "tl-box-done pop" : ""}`),
-				],
-				[],
-			),
-			h.span([h.Class("tl-name")], [stepWord(step)]),
-			h.span([h.AriaHidden(true), h.Class("tl-leader")], []),
-			h.span(
-				[h.Class("tl-value")],
-				[isDone ? formatSeconds(at - startedAt(steps)) : "–"],
-			),
-		],
-	);
+	return h.li
+		.class("tl-row tl-step", !isDone && "tl-pending")
+		.children(
+			h.span
+				.key(isDone ? "done" : "open")
+				.attr("aria-hidden", "true")
+				.class("tl-box", isDone && "tl-box-done pop"),
+			h.span.class("tl-name").children(stepWord(step)),
+			h.span.attr("aria-hidden", "true").class("tl-leader"),
+			h.span
+				.class("tl-value")
+				.children(isDone ? formatSeconds(at - startedAt(steps)) : "–"),
+		);
 };
 
 /**
@@ -400,12 +355,12 @@ const stepRowView = (
  * orange in real time and counts down. A finished one shows how long it
  * really took, and a mark if the page reloaded during it.
  */
-const sleepRowView = (
+const SleepRow = (
+	h: H,
 	maybeRun: Option.Option<OrderRun>,
 	sleep: SleepLine,
 	index: number,
-	h: HtmlBuilder<Message>,
-): Html => {
+): Node => {
 	const state = Option.match(maybeRun, {
 		onNone: () => "pending" as const,
 		onSome: (run) => lineState(index, currentIndex(run.steps)),
@@ -415,30 +370,27 @@ const sleepRowView = (
 		onSome: (run) => momentsIn(run, sleep, index),
 	});
 	const fill = Option.match(maybeRun, {
-		onNone: () => [],
+		onNone: () => null,
 		onSome: (run) => {
 			switch (state) {
 				case "current":
-					return [
-						h.keyed("span")(
-							`fill-${run.key}-${index}`,
-							[h.Class("tl-fill"), h.Style(sleepTiming(run, sleep))],
-							[],
-						),
-					];
+					return h.span
+						.key(`fill-${run.key}-${index}`)
+						.class("tl-fill")
+						.style(sleepTiming(run, sleep));
 				case "done":
-					return [h.span([h.Class("tl-fill tl-fill-done")], [])];
+					return h.span.class("tl-fill tl-fill-done");
 				case "pending":
-					return [];
+					return null;
 			}
 		},
 	});
 	const value = Option.match(maybeRun, {
-		onNone: () => "",
-		onSome: (run) => {
+		onNone: (): Node | string => "",
+		onSome: (run): Node | string => {
 			switch (state) {
 				case "current":
-					return h.span([], [countdownView(run, sleep, h), " left"]);
+					return h.span.children(Countdown(h, run, sleep), " left");
 				case "done": {
 					const signs = moments.map(({ kind }) => `${MOMENT_SIGN[kind]} `);
 					const took = sleptFor(run.steps, index) ?? sleep.durationMs;
@@ -450,54 +402,48 @@ const sleepRowView = (
 		},
 	});
 
-	return h.li(
-		[h.Class(`tl-row tl-sleep ${state === "current" ? "tl-live" : ""}`)],
-		[
-			h.span([h.Class("tl-name")], [`Sleep ${sleep.durationMs / 1000}s`]),
-			h.span(
-				[h.AriaHidden(true), h.Class("tl-bar")],
-				[
-					...fill,
-					...moments.map((moment) => momentView(moment, "tl-joined", h)),
-				],
-			),
-			h.span([h.Class("tl-value")], [value]),
-		],
-	);
+	return h.li
+		.class("tl-row tl-sleep", state === "current" && "tl-live")
+		.children(
+			h.span.class("tl-name").children(`Sleep ${sleep.durationMs / 1000}s`),
+			h.span
+				.attr("aria-hidden", "true")
+				.class("tl-bar")
+				.children(
+					fill,
+					moments.map((moment) => MomentTick(h, moment, "tl-joined")),
+				),
+			h.span.class("tl-value").children(value),
+		);
 };
 
-const timelineView = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html => {
+const Timeline = (h: H, maybeRun: Option.Option<OrderRun>): Node => {
 	const steps = Option.match(maybeRun, {
 		onNone: () => [],
 		onSome: (run) => run.steps,
 	});
-	return h.ol(
-		[h.AriaLabel("Timeline"), h.Class("timeline")],
-		WORKFLOW.map((line, index) =>
-			line.kind === "step"
-				? stepRowView(steps, line, h)
-				: sleepRowView(maybeRun, line, index, h),
-		),
-	);
+	return h.ol
+		.attr("aria-label", "Timeline")
+		.class("timeline")
+		.children(
+			WORKFLOW.map((line, index) =>
+				line.kind === "step"
+					? StepRow(h, steps, line)
+					: SleepRow(h, maybeRun, line, index),
+			),
+		);
 };
 
 /**
  * The one large number: how long the order has run. During a sleep CSS
  * counts it up from the saved steps, so a reload does not reset it.
  */
-const elapsedView = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html => {
-	const big = (key: string, isLive: boolean, value: Html | string) =>
-		h.keyed("p")(
-			key,
-			[h.Class(`elapsed-value ${isLive ? "text-orange" : ""}`)],
-			[value],
-		);
+const Elapsed = (h: H, maybeRun: Option.Option<OrderRun>): Node => {
+	const big = (key: string, isLive: boolean, value: Node | string) =>
+		h.p
+			.key(key)
+			.class("elapsed-value", isLive && "text-orange")
+			.children(value);
 	const content = Option.match(maybeRun, {
 		onNone: () => ({ label: "Elapsed", value: big("none", false, "0.0s") }),
 		onSome: (run) => {
@@ -525,193 +471,148 @@ const elapsedView = (
 				value: big(
 					`clock-${run.key}-${sleep.lineNumber}`,
 					true,
-					h.span(
-						[
-							h.Class("elapsed-clock"),
-							h.Style({
-								...sleepTiming(run, sleep),
-								"--from": `${fromTenths}`,
-								"--to": `${fromTenths + Math.round(sleep.durationMs / 100)}`,
-							}),
-						],
-						[],
-					),
+					h.span.class("elapsed-clock").style({
+						...sleepTiming(run, sleep),
+						"--from": `${fromTenths}`,
+						"--to": `${fromTenths + Math.round(sleep.durationMs / 100)}`,
+					}),
 				),
 			};
 		},
 	});
-	return h.div(
-		[h.Class("elapsed")],
-		[h.p([h.Class("side-label")], [content.label]), content.value],
-	);
+	return h.div
+		.class("elapsed")
+		.children(h.p.class("side-label").children(content.label), content.value);
 };
 
 // ACTIONS
 
-const startButton = (label: string, h: HtmlBuilder<Message>): Html =>
-	h.keyed("button")(
-		`start-${label}`,
-		[
-			h.Id("start-order"),
-			h.Type("button"),
-			h.OnClick(Message.ClickedStartOrder()),
-			h.Class(primaryClass),
-		],
-		[label, h.span([h.AriaHidden(true)], ["→"])],
-	);
+const StartButton = (h: H, label: string): Node =>
+	h.button
+		.key(`start-${label}`)
+		.id("start-order")
+		.attr("type", "button")
+		.on("click", Message.ClickedStartOrder())
+		.class(primaryClass)
+		.children(label, h.span.attr("aria-hidden", "true").children("→"));
 
 /** A ring that empties as the sleep runs out, on the same clock as the sleep. */
-const timerView = (
-	run: OrderRun,
-	sleep: SleepLine,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.svg(
-		[h.AriaHidden(true), h.ViewBox("0 0 20 20"), h.Class("timer")],
-		[
-			h.circle([h.Class("timer-track")], []),
-			h.circle([h.Class("timer-left"), h.Style(sleepTiming(run, sleep))], []),
-		],
-	);
+const Timer = (h: H, run: OrderRun, sleep: SleepLine): Node =>
+	h
+		.el("svg")
+		.attrs({ "aria-hidden": "true", viewBox: "0 0 20 20", class: "timer" })
+		.children(
+			h.el("circle").attr("class", "timer-track"),
+			h
+				.el("circle")
+				.attrs({
+					class: "timer-left",
+					style: `animation-duration:${sleep.durationMs}ms;animation-delay:-${run.sleptMs}ms`,
+				}),
+		);
 
-/** During a sleep the next thing to do is reload, before the ring runs out. */
 /**
  * During a sleep the next thing to do is stop the actor that runs the
  * workflow. The ring shows how long the sleep has left.
  */
-const stopButton = (
-	run: OrderRun,
-	sleep: SleepLine,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.keyed("button")(
-		`stop-${run.key}-${sleep.lineNumber}-${run.wokeAt.length}`,
-		[
-			h.Type("button"),
-			h.DataAttribute("action", "stop"),
-			h.OnClick(Message.ClickedStopActor()),
-			h.Class(primaryClass),
-		],
-		["Stop the actor", timerView(run, sleep, h)],
-	);
+const StopButton = (h: H, run: OrderRun, sleep: SleepLine): Node =>
+	h.button
+		.key(`stop-${run.key}-${sleep.lineNumber}-${run.wokeAt.length}`)
+		.attrs({ type: "button", "data-action": "stop" })
+		.on("click", Message.ClickedStopActor())
+		.class(primaryClass)
+		.children("Stop the actor", Timer(h, run, sleep));
 
 /** While the actor is down, the page holds no connection. This opens one again. */
-const reconnectButton = (h: HtmlBuilder<Message>): Html =>
-	h.keyed("button")(
-		"reconnect",
-		[
-			h.Type("button"),
-			h.DataAttribute("action", "reconnect"),
-			h.OnClick(Message.ClickedReconnect()),
-			h.Class(primaryClass),
-		],
-		["Reconnect now", h.span([h.AriaHidden(true)], ["↻"])],
-	);
+const ReconnectButton = (h: H): Node =>
+	h.button
+		.key("reconnect")
+		.attrs({ type: "button", "data-action": "reconnect" })
+		.on("click", Message.ClickedReconnect())
+		.class(primaryClass)
+		.children("Reconnect now", h.span.attr("aria-hidden", "true").children("↻"));
 
 /** A reload also rejoins the run, so it stays, as a quiet second choice. */
-const reloadLink = (h: HtmlBuilder<Message>): Html =>
-	h.button(
-		[
-			h.Type("button"),
-			h.DataAttribute("action", "reload"),
-			h.OnClick(Message.ClickedReload()),
-			h.Class(`reload-link ${focusClass}`),
-		],
-		["Or reload this page"],
-	);
+const ReloadLink = (h: H): Node =>
+	h.button
+		.attrs({ type: "button", "data-action": "reload" })
+		.on("click", Message.ClickedReload())
+		.class("reload-link", focusClass)
+		.children("Or reload this page");
 
-const waitingButton = (label: string, h: HtmlBuilder<Message>): Html =>
-	h.keyed("button")(
-		`waiting-${label}`,
-		[h.Type("button"), h.Disabled(true), h.Class(primaryClass)],
-		[label, h.span([h.AriaHidden(true), h.Class("blink")], ["…"])],
-	);
+const WaitingButton = (h: H, label: string): Node =>
+	h.button
+		.key(`waiting-${label}`)
+		.attr("type", "button")
+		.disabled(true)
+		.class(primaryClass)
+		.children(
+			label,
+			h.span.attr("aria-hidden", "true").class("blink").children("…"),
+		);
 
-const actionView = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.div(
-		[h.Class("actions actions-stack")],
+const Action = (h: H, maybeRun: Option.Option<OrderRun>): Node =>
+	h.div.class("actions actions-stack").children(
 		Option.match(maybeRun, {
-			onNone: () => [startButton("Start an order", h)],
+			onNone: () => [StartButton(h, "Start an order")],
 			onSome: (run) => {
 				const sleep = currentSleep(run.steps);
-				if (run.isDisconnected) return [reconnectButton(h)];
-				if (isStopped(run)) return [waitingButton("Reconnecting", h)];
+				if (run.isDisconnected) return [ReconnectButton(h)];
+				if (isStopped(run)) return [WaitingButton(h, "Reconnecting")];
 				if (sleep !== undefined)
-					return [stopButton(run, sleep, h), reloadLink(h)];
-				if (isDone(run.steps)) return [startButton("Start another order", h)];
+					return [StopButton(h, run, sleep), ReloadLink(h)];
+				if (isDone(run.steps)) return [StartButton(h, "Start another order")];
 				return [
-					waitingButton(run.isKnown ? "Running" : "Reading the order", h),
+					WaitingButton(h, run.isKnown ? "Running" : "Reading the order"),
 				];
 			},
 		}),
 	);
 
-const sideView = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.aside(
-		[h.Class("side")],
-		[
-			h.div(
-				[h.Class("side-head")],
-				[
-					h.p(
-						[h.Class("side-label flex justify-between gap-4")],
-						[
-							h.span([], ["Order key"]),
+const Side = (h: H, maybeRun: Option.Option<OrderRun>): Node =>
+	h.aside
+		.class("side")
+		.children(
+			h.div
+				.class("side-head")
+				.children(
+					h.p
+						.class("side-label flex justify-between gap-4")
+						.children(
+							h.span.children("Order key"),
 							// Each start of the actor counts. A stop and a start again show here.
-							...Option.match(
+							Option.match(
 								Option.filter(maybeRun, ({ wokeAt }) => wokeAt.length > 0),
 								{
-									onNone: () => [],
-									onSome: ({ key, wokeAt }) => [
-										h.keyed("span")(
-											`wakes-${key}-${wokeAt.length}`,
-											[
-												h.Class(
-													wokeAt.length > 1 ? "pop text-orange-text" : "",
-												),
-											],
-											[`Actor started ${wokeAt.length}×`],
-										),
-									],
+									onNone: () => null,
+									onSome: ({ key, wokeAt }) =>
+										h.span
+											.key(`wakes-${key}-${wokeAt.length}`)
+											.class(wokeAt.length > 1 && "pop text-orange-text")
+											.children(`Actor started ${wokeAt.length}×`),
 								},
 							),
-						],
-					),
+						),
 					Option.match(maybeRun, {
-						onNone: () => h.p([h.Class("text-ink/35")], ["None yet"]),
+						onNone: () => h.p.class("text-ink/35").children("None yet"),
 						onSome: ({ key }) =>
-							h.keyed("p")(key, [h.Class("fade-in truncate")], [key]),
+							h.p.key(key).class("fade-in truncate").children(key),
 					}),
-				],
-			),
-			elapsedView(maybeRun, h),
-			timelineView(maybeRun, h),
-			actionView(maybeRun, h),
-		],
-	);
+				),
+			Elapsed(h, maybeRun),
+			Timeline(h, maybeRun),
+			Action(h, maybeRun),
+		);
 
 /** One line that says what happened and what to do next. */
-const captionOf = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html =>
+const OrderCaption = (h: H, maybeRun: Option.Option<OrderRun>): Node =>
 	Option.match(maybeRun, {
 		onNone: () =>
-			captionView(
-				"idle",
-				[
-					"Starts an ",
-					codeWord("Order", h),
-					" workflow on the server. It saves each step before it runs the next.",
-				],
-				h,
-			),
+			Caption(h, "idle", [
+				"Starts an ",
+				CodeWord(h, "Order"),
+				" workflow on the server. It saves each step before it runs the next.",
+			]),
 		onSome: (run) => {
 			const hasStopped = Option.isSome(run.maybeStop);
 			const hasJoined = Option.isSome(run.maybeJoinedAtMs);
@@ -719,136 +620,104 @@ const captionOf = (
 				const ats = run.steps.map((step) => step.at);
 				const took = formatSeconds(Math.max(...ats) - Math.min(...ats));
 				if (hasStopped) {
-					return captionView(
-						`done-stopped-${run.key}`,
-						[
-							`Shipped in ${took}. The actor stopped mid-run and started again, and no step ran twice.`,
-						],
-						h,
-					);
+					return Caption(h, `done-stopped-${run.key}`, [
+						`Shipped in ${took}. The actor stopped mid-run and started again, and no step ran twice.`,
+					]);
 				}
-				return captionView(
-					`done-${run.key}`,
-					[
-						hasJoined
-							? `Shipped in ${took}. The workflow ran on while the page reloaded.`
-							: `Shipped in ${took}. Next time, stop the actor while it sleeps.`,
-					],
-					h,
-				);
+				return Caption(h, `done-${run.key}`, [
+					hasJoined
+						? `Shipped in ${took}. The workflow ran on while the page reloaded.`
+						: `Shipped in ${took}. Next time, stop the actor while it sleeps.`,
+				]);
 			}
 			if (run.isDisconnected) {
-				return captionView(
-					`stopped-${run.key}`,
-					[
-						"The actor is stopped and this page let go of it. Nothing runs the workflow now. When the sleep ends, RivetKit wakes the actor by itself.",
-					],
-					h,
-				);
+				return Caption(h, `stopped-${run.key}`, [
+					"The actor is stopped and this page let go of it. Nothing runs the workflow now. When the sleep ends, RivetKit wakes the actor by itself.",
+				]);
 			}
 			if (currentSleep(run.steps) === undefined) {
-				return captionView("running", ["The workflow is running."], h);
+				return Caption(h, "running", ["The workflow is running."]);
 			}
 			if (hasStopped) {
-				return captionView(
-					`restarted-${run.key}-${run.wokeAt.length}`,
-					[
-						"The actor started again. The workflow replayed its history, skipped the finished steps, and went on from the same step.",
-					],
-					h,
-				);
+				return Caption(h, `restarted-${run.key}-${run.wokeAt.length}`, [
+					"The actor started again. The workflow replayed its history, skipped the finished steps, and went on from the same step.",
+				]);
 			}
 			if (hasJoined) {
-				return captionView(
-					`joined-${run.key}`,
-					[
-						"The page reloaded, read the saved steps with ",
-						codeWord("GetStatus", h),
-						", and joined the run where it was.",
-					],
-					h,
-				);
+				return Caption(h, `joined-${run.key}`, [
+					"The page reloaded, read the saved steps with ",
+					CodeWord(h, "GetStatus"),
+					", and joined the run where it was.",
+				]);
 			}
-			return captionView(
-				"sleeping",
-				[
-					"The workflow sleeps on the server. Stop its actor and watch it come back.",
-				],
-				h,
-			);
+			return Caption(h, "sleeping", [
+				"The workflow sleeps on the server. Stop its actor and watch it come back.",
+			]);
 		},
 	});
 
 /** The line over the code: what the actor is doing now. */
-const subjectView = (
-	maybeRun: Option.Option<OrderRun>,
-	h: HtmlBuilder<Message>,
-): Html =>
+const Subject = (h: H, maybeRun: Option.Option<OrderRun>): Node =>
 	Option.match(
 		Option.filter(maybeRun, (run) => run.isDisconnected || isStopped(run)),
 		{
-			onNone: () => h.span([], ["The workflow, running"]),
+			onNone: () => h.span.children("The workflow, running"),
 			onSome: () =>
-				h.span(
-					[h.Class("text-orange")],
-					["Actor stopped, memory gone", h.span([h.Class("blink")], [" ■"])],
-				),
+				h.span
+					.class("text-orange")
+					.children(
+						"Actor stopped, memory gone",
+						h.span.class("blink").children(" ■"),
+					),
 		},
 	);
 
 // SLIDE
 
-export const orderSlideView = (
+export const OrderSlide = (
+	h: H,
 	model: Model,
 	feed: ReadonlyArray<FeedEvent>,
-	h: HtmlBuilder<Message>,
-): Html => {
+): Node => {
 	const maybeRun = followedOrder(model);
-	const card = codeCardView(
-		{
-			name: "orderCode",
-			block: ORDER_CODE,
-			options: Option.match(maybeRun, {
-				onNone: () => ({
-					...PLAIN_BLOCK,
+	const card = CodeCard(h, {
+		name: "orderCode",
+		block: ORDER_CODE,
+		options: Option.match(maybeRun, {
+			onNone: () => ({
+				...PLAIN_BLOCK,
+				noteLines: NOTE_LINES,
+				lineData: lineDataOf([]),
+			}),
+			// A stopped actor runs nothing, so no line is lit.
+			onSome: (run) => {
+				const isDown = run.isDisconnected || isStopped(run);
+				return {
+					maybeBar: isDown ? Option.none() : barOf(run),
+					marks: marksOf(h, run),
+					maybeFocus: isDown ? Option.some(new Set<number>()) : focusOf(run),
 					noteLines: NOTE_LINES,
-					lineData: lineDataOf([]),
-				}),
-				// A stopped actor runs nothing, so no line is lit.
-				onSome: (run) => {
-					const isDown = run.isDisconnected || isStopped(run);
-					return {
-						maybeBar: isDown ? Option.none() : barOf(run),
-						marks: marksOf(run, h),
-						maybeFocus: isDown ? Option.some(new Set()) : focusOf(run),
-						noteLines: NOTE_LINES,
-						lineData: lineDataOf(run.steps),
-					};
-				},
-			}),
-			subject: subjectView(maybeRun, h),
-			footer: feedView(feed, h),
-		},
-		h,
-	);
+					lineData: lineDataOf(run.steps),
+				};
+			},
+		}),
+		subject: Subject(h, maybeRun),
+		footer: Feed(h, feed),
+	});
 
-	return h.div(
-		[
-			...Option.match(maybeRun, {
-				onNone: () => [],
-				onSome: ({ key }) => [h.DataAttribute("order", key)],
+	return h.div
+		.attr(
+			"data-order",
+			Option.match(maybeRun, {
+				onNone: () => undefined,
+				onSome: ({ key }) => key,
 			}),
-			h.Class("slide"),
-		],
-		[
-			kickerView(
-				"Durable workflow, one per order",
-				sourceLinkOf(ORDER_CODE),
-				h,
-			),
-			h.h1([h.Class("title")], ["Order workflow"]),
-			h.div([h.Class("slide-body")], [card, sideView(maybeRun, h)]),
-			captionOf(maybeRun, h),
-		],
-	);
+		)
+		.class("slide")
+		.children(
+			Kicker(h, "Durable workflow, one per order", sourceLinkOf(ORDER_CODE)),
+			h.h1.class("title").children("Order workflow"),
+			h.div.class("slide-body").children(card, Side(h, maybeRun)),
+			OrderCaption(h, maybeRun),
+		);
 };

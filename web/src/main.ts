@@ -1,40 +1,29 @@
 import { BrowserKeyValueStore } from "@effect/platform-browser";
-import type { Client } from "@rivetkit/effect";
-import { Effect, Option, Schema } from "effect";
+import { Component, Head, Router } from "@effect/ui";
+import { Effect, Layer, Option } from "effect";
 import { KeyValueStore } from "effect/persistence";
-import { ManagedResource, type Runtime } from "foldkit";
-import type { Url } from "foldkit/url";
-import { LoadCount, LoadOrder } from "./command.ts";
-import { SECOND_WINDOW_QUERY, SETTINGS_STORAGE_KEY } from "./constant.ts";
-import { Message } from "./message.ts";
+import { AppDef, type AppProps } from "./app.ts";
+import { clientLayer } from "./client.ts";
 import {
-	ConnectionState,
-	DEFAULT_SETTINGS,
-	type Model,
-	Settings,
-} from "./model.ts";
-import { urlToAppRoute } from "./route.ts";
-import {
-	closeSpeaker,
-	openSpeaker,
-	Speaker,
-	type SpeakerService,
-} from "./sound.ts";
+	Increment,
+	LoadCount,
+	LoadOrder,
+	PlayCue,
+	SaveSettings,
+	StopActor,
+} from "./command.ts";
+import { SECOND_WINDOW_QUERY, SETTINGS_STORAGE_KEY, TITLE } from "./constant.ts";
+import { ConnectionState, DEFAULT_SETTINGS, Settings } from "./model.ts";
+import { AppRoute } from "./route.ts";
+import { Speaker } from "./sound.ts";
+import { subscriptions } from "./subscription.ts";
+import { update } from "./update.ts";
+import { view } from "./view/view.ts";
 
-export { resources } from "./client.ts";
-export { Message } from "./message.ts";
-export { Model } from "./model.ts";
-export { subscriptions } from "./subscription.ts";
-export { update } from "./update.ts";
-export { view } from "./view/view.ts";
-
-// FLAGS
-
-export const Flags = Settings;
-export type Flags = Settings;
+// PROPS
 
 /** The saved settings. Settings that are missing or do not decode give the defaults. */
-export const flags: Effect.Effect<Flags> = Effect.gen(function* () {
+const savedSettings: Effect.Effect<Settings> = Effect.gen(function* () {
 	const store = KeyValueStore.toSchemaStore(
 		yield* KeyValueStore.KeyValueStore,
 		Settings,
@@ -46,21 +35,24 @@ export const flags: Effect.Effect<Flags> = Effect.gen(function* () {
 	Effect.provide(BrowserKeyValueStore.layerLocalStorage),
 );
 
-// INIT
+/** The root's props, read once when it mounts. */
+export const appProps: Effect.Effect<AppProps, never, Router.Router> =
+	Effect.all({
+		route: Router.currentRoute(AppRoute),
+		settings: savedSettings,
+		isSecondWindow: Effect.sync(() =>
+			location.search.includes(SECOND_WINDOW_QUERY),
+		),
+	});
 
-export const init: Runtime.RoutingApplicationInit<
-	Model,
-	Message,
-	Flags,
-	Client.Client,
-	SpeakerService
-> = ({ orderKeys, isSoundOn }: Flags, url: Url) => {
-	const isSecondWindow = Option.exists(url.search, (search) =>
-		search.includes(SECOND_WINDOW_QUERY),
-	);
-	return {
-		model: {
-			route: urlToAppRoute(url),
+// APP
+
+const AppNoDeps = AppDef.make({
+	init: ($) => {
+		const { route, settings, isSecondWindow } = $.props;
+		const { orderKeys, isSoundOn } = settings;
+		return $.set({
+			route,
 			connection: ConnectionState.Connecting(),
 			maybeError: Option.none(),
 			isSoundOn: isSoundOn && !isSecondWindow,
@@ -89,28 +81,25 @@ export const init: Runtime.RoutingApplicationInit<
 				maybeLastChange: Option.none(),
 			},
 			feed: [],
-		},
-		// A saved run may be done already, so the page reads it before it connects.
-		commands: [LoadCount(), ...orderKeys.map((key) => LoadOrder({ key }))],
-	};
-};
+			// A saved run may be done already, so the page reads it before it connects.
+		}).run(LoadCount.make(), ...orderKeys.map((key) => LoadOrder.make({ key })));
+	},
+	update,
+	subscriptions,
+	head: () => [Head.title(TITLE)],
+	view,
+});
 
-// MANAGED RESOURCES
+/** One speaker and one Rivet client for the whole page. */
+const appLayer = Layer.mergeAll(
+	PlayCue.layer,
+	SaveSettings.layer.pipe(
+		Layer.provide(BrowserKeyValueStore.layerLocalStorage),
+	),
+	LoadCount.layer,
+	Increment.layer,
+	LoadOrder.layer,
+	StopActor.layer,
+).pipe(Layer.provideMerge(Layer.merge(Speaker.layer, clientLayer)));
 
-export const managedResources = ManagedResource.make<Model, Message>()(
-	(entry) => ({
-		speaker: entry(Schema.Option(Schema.Null), {
-			resource: Speaker,
-			modelToMaybeRequirements: (model) =>
-				model.isSoundOn && model.hasInteracted
-					? Option.some(null)
-					: Option.none(),
-			acquire: () => openSpeaker,
-			release: closeSpeaker,
-			onAcquired: () => Message.AcquiredSpeaker(),
-			onReleased: () => Message.ReleasedSpeaker(),
-			onAcquireError: (error) =>
-				Message.FailedAcquireSpeaker({ error: String(error) }),
-		}),
-	}),
-);
+export const App = AppNoDeps.pipe(Component.provide(appLayer));

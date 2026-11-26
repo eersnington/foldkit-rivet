@@ -10,17 +10,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-node": "4.1.3",
+    "@effect/platform-node": "4.1.5",
     "@rivetkit/effect": "file:./rivetkit-effect-pr1800.tgz",
-    "effect": "4.1.3",
+    "effect": "4.1.5",
     "rivetkit": "3.0.7"
   },
   "devDependencies": {
-    "@effect/platform-browser": "4.1.3",
-    "@foldkit/vite-plugin": "0.29.0",
+    "@effect/platform-browser": "4.1.5",
+    "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.18.1",
-    "foldkit": "0.170.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"

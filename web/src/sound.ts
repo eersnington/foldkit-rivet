@@ -3,12 +3,11 @@
 // result, and a chord when an order ships. A short room reverb, made from
 // decaying noise, gives the notes a little space.
 
-import { Effect, Schema } from "effect";
-import { ManagedResource } from "foldkit";
-import { defineTaggedUnion } from "foldkit/schema";
+import { UiSchema } from "@effect/ui";
+import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect";
 
 /** What a sound is for. `degree` picks a note of the scale, so a run of results climbs. */
-export const Cue = defineTaggedUnion({
+export const Cue = UiSchema.TaggedEnum({
 	Tick: {},
 	Note: { degree: Schema.Number },
 	Echo: { degree: Schema.Number },
@@ -18,7 +17,7 @@ export const Cue = defineTaggedUnion({
 export type Cue = typeof Cue.Type;
 
 /** An open `AudioContext` and the node every sound plays into. */
-export type Speaker = {
+export type SpeakerNodes = {
 	readonly context: AudioContext;
 	/** Plays dry and into the reverb. */
 	readonly output: AudioNode;
@@ -61,13 +60,22 @@ const whenIdle = Effect.callback<void>((resume) => {
 });
 
 /**
- * The speaker exists while sound is on and the viewer has pressed something
- * on the page. A browser does not start audio before that.
+ * The open speaker, if any. `holdSpeaker` opens it while it runs, and
+ * `PlayCue` plays into it. A cue while it is closed plays nothing.
  */
-export const Speaker = ManagedResource.tag<Speaker>()("Speaker");
-export type SpeakerService = ManagedResource.ServiceOf<typeof Speaker>;
+export class Speaker extends Context.Service<
+	Speaker,
+	{ readonly current: Ref.Ref<Option.Option<SpeakerNodes>> }
+>()("Speaker") {
+	static readonly layer = Layer.effect(
+		Speaker,
+		Effect.map(Ref.make(Option.none<SpeakerNodes>()), (current) => ({
+			current,
+		})),
+	);
+}
 
-const createSpeaker = (): Speaker => {
+const createSpeaker = (): SpeakerNodes => {
 	const context = new AudioContext();
 	const output = context.createGain();
 	output.gain.value = 0.8;
@@ -94,12 +102,36 @@ const createSpeaker = (): Speaker => {
 	return { context, output, noise };
 };
 
-export const openSpeaker = whenIdle.pipe(
-	Effect.andThen(Effect.sync(createSpeaker)),
-);
-
-export const closeSpeaker = (speaker: Speaker) =>
-	Effect.promise(() => speaker.context.close());
+/**
+ * Opens the speaker and keeps it open until the stream is interrupted, then
+ * closes it. Sound is optional, so a speaker that fails to open only logs.
+ * The speaker exists while sound is on and the viewer has pressed something
+ * on the page. A browser does not start audio before that.
+ */
+export const holdSpeaker: Stream.Stream<never, never, Speaker> =
+	Stream.fromEffect(
+		Effect.gen(function* () {
+			const { current } = yield* Speaker;
+			yield* whenIdle;
+			yield* Effect.acquireRelease(
+				Effect.try(createSpeaker).pipe(
+					Effect.tap((speaker) => Ref.set(current, Option.some(speaker))),
+				),
+				(speaker) =>
+					Ref.set(current, Option.none()).pipe(
+						Effect.andThen(Effect.promise(() => speaker.context.close())),
+					),
+			);
+			return yield* Effect.never;
+		}).pipe(
+			Effect.catch((error) =>
+				Effect.logWarning("speaker failed to open", error).pipe(
+					Effect.andThen(Effect.never),
+				),
+			),
+			Effect.scoped,
+		),
+	);
 
 // VOICES
 
@@ -112,7 +144,7 @@ const noteOf = (degree: number) => SCALE[degree % SCALE.length];
 
 /** A gain that rises in 3 ms and falls to silence by `at + seconds`, so no sound clicks. */
 const envelope = (
-	speaker: Speaker,
+	speaker: SpeakerNodes,
 	at: number,
 	seconds: number,
 	peak: number,
@@ -136,7 +168,7 @@ type Tone = {
 };
 
 const tone = (
-	speaker: Speaker,
+	speaker: SpeakerNodes,
 	at: number,
 	{ type, from, to, glideSeconds, seconds, peak }: Tone,
 ) => {
@@ -150,7 +182,7 @@ const tone = (
 };
 
 /** 10 ms of filtered noise: the soft click of a key. */
-const tick = (speaker: Speaker, at: number) => {
+const tick = (speaker: SpeakerNodes, at: number) => {
 	const source = speaker.context.createBufferSource();
 	source.buffer = speaker.noise;
 	const filter = speaker.context.createBiquadFilter();
@@ -166,7 +198,7 @@ const tick = (speaker: Speaker, at: number) => {
  * times higher that dies away fast. A marimba sounds like this.
  */
 const pluck = (
-	speaker: Speaker,
+	speaker: SpeakerNodes,
 	frequency: number,
 	at: number,
 	seconds: number,
@@ -190,7 +222,7 @@ const pluck = (
 	});
 };
 
-const play = (speaker: Speaker, cue: Cue, at: number) =>
+const play = (speaker: SpeakerNodes, cue: Cue, at: number) =>
 	Cue.match(cue, {
 		Tick: () => tick(speaker, at),
 		Note: ({ degree }) => {
@@ -218,7 +250,7 @@ const play = (speaker: Speaker, cue: Cue, at: number) =>
 	});
 
 /** Plays `cue` now. A context that the browser has suspended is resumed first. */
-export const playCue = (speaker: Speaker, cue: Cue) =>
+export const playCue = (speaker: SpeakerNodes, cue: Cue) =>
 	Effect.promise(() =>
 		speaker.context.state === "suspended"
 			? speaker.context.resume()

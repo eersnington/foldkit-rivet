@@ -1,5 +1,5 @@
+import { UiSchema } from "@effect/ui";
 import { Option, Schema } from "effect";
-import { defineTaggedUnion } from "foldkit/schema";
 import { OrderStep } from "../../shared/api.ts";
 import { AppRoute } from "./route.ts";
 import { isDone } from "./workflow.ts";
@@ -104,7 +104,7 @@ export type FeedEvent = typeof FeedEvent.Type;
 
 // MODEL
 
-export const ConnectionState = defineTaggedUnion({
+export const ConnectionState = UiSchema.TaggedEnum({
 	Connecting: {},
 	Connected: {},
 	Disconnected: {},

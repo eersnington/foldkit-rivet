@@ -1,30 +1,21 @@
+import { UiSchema } from "@effect/ui";
 import { Schema } from "effect";
-import { defineMessageUnion } from "foldkit/message";
-import { UrlRequest } from "foldkit/navigation";
-import { Url } from "foldkit/url";
 import { OrderStep } from "../../shared/api.ts";
 import { FeedEvent } from "./model.ts";
+import { AppRoute } from "./route.ts";
 
-export const Message = defineMessageUnion({
+export const Message = UiSchema.TaggedEnum({
 	// Page
-	ClickedLink: { request: UrlRequest },
-	ChangedUrl: { url: Url },
-	CompletedNavigateInternal: {},
-	CompletedLoadExternal: {},
+	ChangedRoute: { route: AppRoute },
+	ClickedTab: {},
 	InteractedWithPage: {},
 	ClickedSound: {},
-	CompletedSaveSettings: {},
-	AcquiredSpeaker: {},
-	ReleasedSpeaker: {},
-	FailedAcquireSpeaker: { error: Schema.String },
-	CompletedPlayCue: {},
 	TimestampedFeedEvent: { event: FeedEvent },
 
 	// Counter
 	ClickedIncrement: {},
 	ClickedBurst: {},
 	ClickedOpenClient: {},
-	CompletedOpenClient: {},
 	SucceededLoadCount: { count: Schema.Number },
 	FailedLoadCount: { error: Schema.String },
 	SucceededIncrement: {
@@ -44,7 +35,6 @@ export const Message = defineMessageUnion({
 	ClickedStopActor: {},
 	SucceededStopActor: { key: Schema.String, stoppedAt: Schema.Number },
 	FailedStopActor: { error: Schema.String },
-	CompletedReloadPage: {},
 	ConnectedOrder: { key: Schema.String },
 	ClickedReconnect: {},
 	CompletedWaitForSleepEnd: { key: Schema.String, wakesBefore: Schema.Number },

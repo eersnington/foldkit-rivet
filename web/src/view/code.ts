@@ -1,9 +1,7 @@
 import { Option } from "effect";
-import type { Html, HtmlBuilder } from "foldkit/html";
 import type { FeedEvent } from "../model.ts";
-import type { Message } from "../message.ts";
 import type { Block, Line, TokenKind } from "../source.ts";
-import { SOURCE_URL } from "./shared.ts";
+import { type H, type Node, SOURCE_URL } from "./shared.ts";
 
 /** Ink for the code, grey for its frame, and orange for calls, as in a printed listing. */
 const TOKEN_CLASS: Record<TokenKind, string> = {
@@ -30,9 +28,9 @@ export type LineMark = {
 	/** The line ran, so its gutter shows a tick. */
 	readonly isDone: boolean;
 	/** Layers behind the line, for example the progress of a sleep. */
-	readonly under: ReadonlyArray<Html>;
+	readonly under: ReadonlyArray<Node>;
 	/** A value at the end of the line. Only lines in `noteLines` show one. */
-	readonly maybeNote: Option.Option<Html>;
+	readonly maybeNote: Option.Option<Node>;
 };
 
 /**
@@ -89,29 +87,21 @@ const blockColumns = (block: Block, noteLines: ReadonlySet<number>) =>
 		),
 	);
 
-const barView = (block: Block, bar: Bar, h: HtmlBuilder<Message>): Html => {
+const BarMark = (h: H, block: Block, bar: Bar): Node => {
 	const first = block.lines[0].number;
-	return h.keyed("span")(
-		bar.key,
-		[
-			h.AriaHidden(true),
-			h.Class(`bar ${bar.motion === "rest" ? "" : `bar-${bar.motion}`}`),
-			h.Style({
-				"--from": `${bar.from - first}`,
-				"--via": `${bar.via - first}`,
-				"--call": `${bar.call - first}`,
-				"--to": `${bar.to - first}`,
-			}),
-		],
-		[],
-	);
+	return h.span
+		.key(bar.key)
+		.attr("aria-hidden", "true")
+		.class("bar", bar.motion !== "rest" && `bar-${bar.motion}`)
+		.style({
+			"--from": `${bar.from - first}`,
+			"--via": `${bar.via - first}`,
+			"--call": `${bar.call - first}`,
+			"--to": `${bar.to - first}`,
+		});
 };
 
-const lineView = (
-	line: Line,
-	options: BlockOptions,
-	h: HtmlBuilder<Message>,
-): Html => {
+const CodeLine = (h: H, line: Line, options: BlockOptions): Node => {
 	const { number, indent, tokens } = line;
 	const mark = options.marks.get(number);
 	const isDim = Option.match(options.maybeFocus, {
@@ -130,39 +120,38 @@ const lineView = (
 		({ maybeNote }) => maybeNote,
 	);
 
-	const data = Object.entries(options.lineData.get(number) ?? {});
-
-	return h.li(
-		[
-			...data.map(([name, value]) => h.DataAttribute(name, value)),
-			h.Class(`row ${isDim ? "row-dim" : ""} ${isAt ? "row-at" : ""}`),
-		],
-		[
-			...(mark?.under ?? []),
-			// A new element when the line finishes, so the tick pops in.
-			h.keyed("span")(
-				isDone ? "done" : "open",
-				[h.AriaHidden(true), h.Class(`check ${isDone ? "pop-late" : ""}`)],
-				[isDone ? "✓" : ""],
-			),
-			h.span([h.AriaHidden(true), h.Class("number")], [`${number}`]),
-			h.code(
-				[h.Class("code"), h.Style({ "--indent": `${indentColumns}ch` })],
-				[
-					indent,
-					...tokens.map(({ kind, text }) =>
-						kind === "plain"
-							? text
-							: h.span([h.Class(TOKEN_CLASS[kind])], [text]),
-					),
-				],
-			),
-			// A row that can carry a note always has the room for it, so a note never moves the rows.
-			...(options.noteLines.has(number)
-				? [h.span([h.Class("note")], Option.toArray(maybeNote))]
-				: []),
-		],
+	const data = Object.fromEntries(
+		Object.entries(options.lineData.get(number) ?? {}).map(([name, value]) => [
+			`data-${name}`,
+			value,
+		]),
 	);
+
+	return h.li
+		.attrs(data)
+		.class("row", isDim && "row-dim", isAt && "row-at")
+		.children(
+			mark?.under ?? [],
+			// A new element when the line finishes, so the tick pops in.
+			h.span
+				.key(isDone ? "done" : "open")
+				.attr("aria-hidden", "true")
+				.class("check", isDone && "pop-late")
+				.children(isDone ? "✓" : ""),
+			h.span.attr("aria-hidden", "true").class("number").children(`${number}`),
+			h.code
+				.class("code")
+				.style({ "--indent": `${indentColumns}ch` })
+				.children(
+					indent,
+					tokens.map(({ kind, text }) =>
+						kind === "plain" ? text : h.span.class(TOKEN_CLASS[kind]).children(text),
+					),
+				),
+			// A row that can carry a note always has the room for it, so a note never moves the rows.
+			options.noteLines.has(number) &&
+				h.span.class("note").children(Option.toArray(maybeNote)),
+		);
 };
 
 export type CardOptions = {
@@ -171,8 +160,8 @@ export type CardOptions = {
 	readonly block: Block;
 	readonly options: BlockOptions;
 	/** What the code runs on, at the top right of the card. */
-	readonly subject: Html;
-	readonly footer: Html;
+	readonly subject: Node;
+	readonly footer: Node;
 };
 
 /**
@@ -180,84 +169,70 @@ export type CardOptions = {
  * lines on GitHub. The runtime draws on it: a bar on the running line, ticks
  * and values on the lines that ran.
  */
-export const codeCardView = (
+export const CodeCard = (
+	h: H,
 	{ name, block, options, subject, footer }: CardOptions,
-	h: HtmlBuilder<Message>,
-): Html => {
-	return h.keyed("section")(
-		name,
-		[
-			h.DataAttribute("block", name),
-			h.Class("card"),
-			h.Style({
-				"--cols": `${blockColumns(block, options.noteLines)}`,
-				"--rows": `${block.lines.length}`,
-			}),
-		],
-		[
-			h.header(
-				[h.Class("card-edge card-head")],
-				[
-					h.div([h.Class("min-w-0 truncate")], [subject]),
-					h.span([h.Class("hidden shrink-0 sm:inline")], [block.path]),
-				],
-			),
-			h.div(
-				[h.Class("card-body")],
-				[
-					h.div(
-						[h.Class("source")],
-						[
-							...Option.match(options.maybeBar, {
-								onNone: () => [],
-								onSome: (bar) => [barView(block, bar, h)],
+): Node =>
+	h.section
+		.key(name)
+		.attr("data-block", name)
+		.class("card")
+		.style({
+			"--cols": `${blockColumns(block, options.noteLines)}`,
+			"--rows": `${block.lines.length}`,
+		})
+		.children(
+			h.header
+				.class("card-edge card-head")
+				.children(
+					h.div.class("min-w-0 truncate").children(subject),
+					h.span.class("hidden shrink-0 sm:inline").children(block.path),
+				),
+			h.div
+				.class("card-body")
+				.children(
+					h.div
+						.class("source")
+						.children(
+							Option.match(options.maybeBar, {
+								onNone: () => null,
+								onSome: (bar) => BarMark(h, block, bar),
 							}),
-							h.ol(
-								[h.Class("relative")],
-								block.lines.map((line) => lineView(line, options, h)),
-							),
-						],
-					),
-				],
-			),
-			h.footer([h.Class("card-edge card-foot")], [footer]),
-		],
-	);
-};
+							h.ol
+								.class("relative")
+								.children(block.lines.map((line) => CodeLine(h, line, options))),
+						),
+				),
+			h.footer.class("card-edge card-foot").children(footer),
+		);
 
 /**
  * The latest events of the open demo, newest first. The newest one slides
  * in, and the older ones dim.
  */
-export const feedView = (
-	feed: ReadonlyArray<FeedEvent>,
-	h: HtmlBuilder<Message>,
-): Html =>
-	h.ol(
-		[h.Id("feed"), h.AriaLabel("Events"), h.Class("feed")],
-		feed.length === 0
-			? [h.li([h.Class("text-ink/35")], ["No events yet"])]
-			: feed.map((event, index) =>
-					h.keyed("li")(
-						`${event.at}-${event.text}-${event.source}`,
-						[
-							h.DataAttribute("event", event.name),
-							h.Class(`feed-item ${index === 0 ? "feed-new" : ""}`),
-						],
-						[
-							h.span([h.Class("text-ink")], [event.name]),
-							h.span([], [event.text]),
-							h.span(
-								[
-									h.Class(
+export const Feed = (h: H, feed: ReadonlyArray<FeedEvent>): Node =>
+	h.ol
+		.id("feed")
+		.attr("aria-label", "Events")
+		.class("feed")
+		.children(
+			feed.length === 0
+				? h.li.class("text-ink/35").children("No events yet")
+				: feed.map((event, index) =>
+						h.li
+							.key(`${event.at}-${event.text}-${event.source}`)
+							.attr("data-event", event.name)
+							.class("feed-item", index === 0 && "feed-new")
+							.children(
+								h.span.class("text-ink").children(event.name),
+								h.span.children(event.text),
+								h.span
+									.class(
 										event.source === "another window"
 											? "text-orange-text"
 											: "text-ink/45",
-									),
-								],
-								[event.source],
+									)
+									.children(event.source),
 							),
-						],
 					),
-				),
-	);
+		);

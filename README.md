@@ -2,7 +2,7 @@
 
 ![Starting an order, stopping its actor mid-sleep, and watching the workflow resume and ship](media/demo.gif)
 
-A [Foldkit](https://foldkit.dev) app over Rivet Actors written with `@rivetkit/effect`. One contract file is shared by the server and the browser, so every call is typed end to end.
+An [Effect UI](https://ui.effect.website) app over Rivet Actors written with `@rivetkit/effect`. One contract file is shared by the server and the browser, so every call is typed end to end.
 
 Live: https://effectdemom78m.onrivet.dev
 
@@ -41,7 +41,9 @@ rivet deploy --cluster <cluster> --org <org> --yes \
 ```
 shared/api.ts   contracts: Counter actor and Order workflow
 server/         counter, order workflow, HTTP (/config.json, /token, /health, /metrics)
-web/src/        Foldkit app: model, update, commands, subscriptions, views
+web/src/        Effect UI app: model, update, commands, subscriptions, views
 ```
 
 `rivetkit-effect-pr1800.tgz` is a prerelease of `@rivetkit/effect`.
+
+`@effect/ui` is a public preview that is not on npm yet. `package.json` installs a [pkg.pr.new](https://pkg.pr.new/~/Effect-TS/ui) snapshot pinned to commit `87a704b` of [Effect-TS/ui](https://github.com/Effect-TS/ui), so `pnpm install` needs network access.

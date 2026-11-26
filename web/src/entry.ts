@@ -1,32 +1,12 @@
-import { Runtime } from "foldkit";
-import {
-	Flags,
-	flags,
-	init,
-	managedResources,
-	Message,
-	Model,
-	resources,
-	subscriptions,
-	update,
-	view,
-} from "./main.ts";
+import { BrowserHost, BrowserRouter } from "@effect/ui/html";
+import { Effect, Layer } from "effect";
+import { App, appProps } from "./main.ts";
+import { AppRoute } from "./route.ts";
 
-const application = Runtime.makeApplication({
-	Model,
-	Flags,
-	init,
-	update,
-	view,
-	subscriptions,
-	resources,
-	managedResources,
-	container: document.getElementById("root"),
-	routing: {
-		onUrlRequest: (request) => Message.ClickedLink({ request }),
-		onUrlChange: (url) => Message.ChangedUrl({ url }),
-	},
-	devTools: { Message },
-});
+const Main = BrowserHost.mount(
+	App,
+	appProps,
+	document.getElementById("root")!,
+).pipe(Layer.provide(BrowserRouter.layer({ routes: AppRoute })));
 
-Runtime.run(application, { flags });
+Layer.launch(Main).pipe(Effect.runFork);
