@@ -9,6 +9,8 @@ FROM base AS web
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY shared shared
+# The page shows the server source, so the web build reads these files.
+COPY server server
 COPY web web
 RUN pnpm build
 
