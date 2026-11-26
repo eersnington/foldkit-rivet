@@ -2,7 +2,7 @@
 FROM node:22-bookworm-slim AS base
 WORKDIR /app
 RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml rivetkit-effect-3.1.0-rc.tgz ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml rivetkit-effect-pr1800.tgz ./
 
 # Builds the Foldkit frontend to web/dist.
 FROM base AS web
@@ -22,7 +22,5 @@ COPY shared shared
 COPY server server
 COPY --from=web /app/web/dist web/dist
 ENV NODE_ENV=production
-# `Registry.layer()` has no `startServices` option, so turn Rivet Services off here.
-ENV RIVET_RUN_SERVICES=0
 # Node runs the TypeScript sources directly (type stripping).
 CMD ["node", "server/main.ts"]

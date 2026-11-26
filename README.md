@@ -12,7 +12,7 @@ Live demo: https://effectdemom78m.onrivet.dev
 | Effect client | `getOrCreate`, typed actions, `connect` with one `Stream` for each event, and `getToken`. |
 
 > [!NOTE]
-> `rivetkit-effect-3.1.0-rc.tgz` is a prerelease of `@rivetkit/effect`, packed from the unreleased Effect SDK update. It needs `rivetkit` 3.0.7 or later and `effect` 4.1.x.
+> `rivetkit-effect-pr1800.tgz` is a prerelease of `@rivetkit/effect`, packed from the unreleased Effect SDK update. It needs `rivetkit` 3.0.7 and `effect` 4.1.x.
 
 ## How it works
 
@@ -22,7 +22,7 @@ flowchart LR
     UI[Foldkit app]
   end
   subgraph Pool["Runner pool (this image)"]
-    HTTP["HTTP server<br/>/ · /config.json · /token"]
+    HTTP["HTTP server<br/>/ · /config.json · /token · /health"]
     Actors["Counter actor<br/>Order workflow"]
   end
   CP[Rivet control plane]
@@ -39,14 +39,26 @@ flowchart LR
 ## Project layout
 
 ```
-shared/api.ts        Contracts: Counter (Actor.make) and Order (Workflow.make)
-server/counter.ts    Counter implementation
-server/order.ts      Order workflow implementation
-server/http.ts       Static files, /config.json, /token, /healthz
-server/main.ts       Starts the actors and the HTTP server
-web/src/main.ts      Foldkit app: model, messages, commands, subscriptions, view
-web/src/entry.ts     Foldkit entry point
-Dockerfile           Runner image for Rivet Cloud
+shared/api.ts            Contracts: Counter (Actor.make) and Order (Workflow.make)
+server/counter.ts        Counter implementation
+server/order.ts          Order workflow implementation
+server/http.ts           Static files, /config.json, /token, /health, /metrics
+server/main.ts           Starts the actors and the HTTP server
+web/src/entry.ts         Foldkit entry point
+web/src/main.ts          Flags, init and the Foldkit program
+web/src/model.ts         Model and settings
+web/src/message.ts       Every message
+web/src/update.ts        The update function
+web/src/command.ts       Navigation, counter calls, orders and sound
+web/src/subscription.ts  Live counter and order connections, the clock
+web/src/route.ts         One route per demo
+web/src/client.ts        The Rivet client from /config.json and /token
+web/src/workflow.ts      Where an order is in its workflow, from its steps
+web/src/source.ts        The server source shown on the page
+web/src/sound.ts         Synthesized sounds, no audio files
+web/src/view/            Page, counter, order, code listing and shared parts
+web/public/fonts/        Departure Mono and its license (SIL OFL)
+Dockerfile               Runner image for Rivet Cloud
 ```
 
 ## The workflow
@@ -123,6 +135,7 @@ The pool's public URL serves the app. Use the cluster's API host, not the pool's
 | `PUBLIC_RIVET_NAMESPACE` | `/config.json`, `/token` | Namespace. Default: `default`. |
 | `RIVET_ADMIN_TOKEN` | `/token` | Secret, server only. Issues a 15-minute scoped token for the browser. When it is not set, `/token` answers `{"token": null}`. |
 | `PORT` | HTTP server | Port for the app. Default: `8080`. Rivet Cloud sets it. |
+| `RIVETKIT_METRICS_PORT` | Metrics server | Port for `GET /metrics` on `127.0.0.1`. Default: `9464`. |
 | `RIVET_ENDPOINT`, `RIVET_TOKEN`, `RIVET_NAMESPACE`, `RIVET_POOL` | Actors | Rivet Cloud sets these. Do not set them yourself. |
 
 ## Security

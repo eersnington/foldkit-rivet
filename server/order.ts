@@ -1,4 +1,4 @@
-import { db, Workflow } from "@rivetkit/effect";
+import { Actor, db, Workflow } from "@rivetkit/effect";
 import { Clock, Effect } from "effect";
 import { Order, type OrderStatus, StatusChanged } from "../shared/api.ts";
 
@@ -35,23 +35,34 @@ export const OrderLive = Order.toLayer(
 				await client.execute(
 					"CREATE TABLE IF NOT EXISTS steps (status TEXT PRIMARY KEY, at INTEGER NOT NULL)",
 				);
+				await client.execute(
+					"CREATE TABLE IF NOT EXISTS wakes (id INTEGER PRIMARY KEY, at INTEGER NOT NULL)",
+				);
 			},
 		}),
+		// This runs once on each wake, so it records when each wake happened.
 		actions: Effect.gen(function* () {
 			const sql = yield* Order.sql;
+			const now = yield* Clock.currentTimeMillis;
+			yield* sql`INSERT INTO wakes (at) VALUES (${now})`.pipe(Effect.orDie);
 
 			return Order.of({
 				GetStatus: () =>
-					sql<{
-						status: OrderStatus;
-						at: number;
-					}>`SELECT status, at FROM steps ORDER BY at`.pipe(
-						Effect.map((steps) => ({
+					Effect.all({
+						steps: sql<{
+							status: OrderStatus;
+							at: number;
+						}>`SELECT status, at FROM steps ORDER BY at`,
+						wakes: sql<{ at: number }>`SELECT at FROM wakes ORDER BY id`,
+					}).pipe(
+						Effect.map(({ steps, wakes }) => ({
 							status: steps.at(-1)?.status ?? ("new" as const),
 							steps,
+							wokeAt: wakes.map((wake) => wake.at),
 						})),
 						Effect.orDie,
 					),
+				Stop: () => Actor.sleep,
 			});
 		}),
 	},

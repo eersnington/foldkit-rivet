@@ -6,6 +6,9 @@ importers:
   .:
     configDependencies: {}
     packageManagerDependencies:
+      '@pnpm/exe':
+        specifier: 12.11.2
+        version: 12.11.2
       pnpm:
         specifier: 12.11.2
         version: 12.11.2
@@ -89,6 +92,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@pnpm/exe@12.11.2':
+    resolution: {integrity: sha512-uUudrvXShgp6yYRL/6XjeB2B2kbjE/alBdVWjFBP0jDiOnV5R83OpCWuGtc+Tn4stk0DEgO/x+vhEUTUf4x+Yw==}
+    engines: {node: '>=18.*'}
+    hasBin: true
+
   pnpm@12.11.2:
     resolution: {integrity: sha512-JaUWUqGWeFr18ovabf6NxYLr76SsHRgCIc4TkCMcX7dmN4IupLbkYzznSs3LCnf3Ja8RutOBd/3t2u6BipVcuQ==}
     engines: {node: '>=18.*'}
@@ -138,6 +146,23 @@ snapshots:
   '@pnpm/exe.win32-x64@12.11.2':
     optional: true
 
+  '@pnpm/exe@12.11.2':
+    optionalDependencies:
+      '@pnpm/exe.android-arm64': 12.11.2
+      '@pnpm/exe.android-x64': 12.11.2
+      '@pnpm/exe.darwin-arm64': 12.11.2
+      '@pnpm/exe.darwin-x64': 12.11.2
+      '@pnpm/exe.freebsd-x64': 12.11.2
+      '@pnpm/exe.linux-arm64': 12.11.2
+      '@pnpm/exe.linux-arm64-musl': 12.11.2
+      '@pnpm/exe.linux-ppc64': 12.11.2
+      '@pnpm/exe.linux-riscv64': 12.11.2
+      '@pnpm/exe.linux-s390x': 12.11.2
+      '@pnpm/exe.linux-x64': 12.11.2
+      '@pnpm/exe.linux-x64-musl': 12.11.2
+      '@pnpm/exe.win32-arm64': 12.11.2
+      '@pnpm/exe.win32-x64': 12.11.2
+
   pnpm@12.11.2:
     optionalDependencies:
       '@pnpm/exe.android-arm64': 12.11.2
@@ -170,8 +195,8 @@ importers:
         specifier: 4.1.3
         version: 4.1.3(effect@4.1.3)(redis@6.3.1(@opentelemetry/api@1.10.0))
       '@rivetkit/effect':
-        specifier: file:./rivetkit-effect-3.1.0-rc.tgz
-        version: file:rivetkit-effect-3.1.0-rc.tgz(effect@4.1.3)(rivetkit@3.0.7(ws@8.22.2))
+        specifier: file:./rivetkit-effect-pr1800.tgz
+        version: file:rivetkit-effect-pr1800.tgz(effect@4.1.3)(rivetkit@3.0.7(ws@8.22.2))
       effect:
         specifier: 4.1.3
         version: 4.1.3
@@ -402,12 +427,12 @@ packages:
     resolution: {integrity: sha512-3qndQUQXLdwafMEqfhz24hUtDPcsf1Bu3q52Kb8MqeH8JUh3h6R4HYW3ZJXiQsLcyYyFM68PuIwlLRlg1xDEpg==}
     engines: {node: ^14.18.0 || >=16.0.0}
 
-  '@rivetkit/effect@file:rivetkit-effect-3.1.0-rc.tgz':
-    resolution: {integrity: sha512-oG24njdGr2xlbMOn/aDED5qFiOtc4ZvpsnxzaL93gpbHb/n/E0UUAybW48uBb9cPdRvm6+Yw2h9Y950dFgbMww==, tarball: file:rivetkit-effect-3.1.0-rc.tgz}
-    version: 3.1.0-rc
+  '@rivetkit/effect@file:rivetkit-effect-pr1800.tgz':
+    resolution: {integrity: sha512-ZHVIK2NeljtcrDAc6caTNZcJ/f+p52nUqbiccpGCKlHms+9VteeoFP8zPgDC1IRiATNXuCgJJLzd7UQBToBE3w==, tarball: file:rivetkit-effect-pr1800.tgz}
+    version: 3.0.7
     peerDependencies:
       effect: ^4.0.0
-      rivetkit: ^3.0.7
+      rivetkit: 3.0.7
 
   '@rivetkit/engine-api-full@3.0.7':
     resolution: {integrity: sha512-WubEvWvjOoNC+o2Xs9Qd6Hn00lnJae1Li8ZM+oMxaWlWDt3pqiYqZ5Fcit7Pbz7Hrp4to/V09KCfsDgTS9PJiQ==}
@@ -1619,7 +1644,7 @@ snapshots:
 
   '@rivetkit/bare-ts@0.6.2': {}
 
-  '@rivetkit/effect@file:rivetkit-effect-3.1.0-rc.tgz(effect@4.1.3)(rivetkit@3.0.7(ws@8.22.2))':
+  '@rivetkit/effect@file:rivetkit-effect-pr1800.tgz(effect@4.1.3)(rivetkit@3.0.7(ws@8.22.2))':
     dependencies:
       '@rivet-dev/workflows': 1.1.1(rivetkit@3.0.7(ws@8.22.2))
       effect: 4.1.3

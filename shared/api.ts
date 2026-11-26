@@ -39,14 +39,23 @@ export const GetStatus = Action.make("GetStatus", {
 		// "new" until the first step finishes.
 		status: Schema.Union([Schema.Literal("new"), OrderStatus]),
 		steps: Schema.Array(OrderStep),
+		/** When each instance of this order's actor started, in Unix ms, oldest first. */
+		wokeAt: Schema.Array(Schema.Number),
 	}),
 });
+
+/**
+ * Stops this order's actor while it runs. Its memory and connections go,
+ * and only its SQLite and workflow history stay. RivetKit starts it again
+ * when the workflow's sleep ends, or earlier if a client connects.
+ */
+export const Stop = Action.make("Stop");
 
 export const StatusChanged = Event.make("StatusChanged", {
 	payload: OrderStep.fields,
 });
 
 export const Order = Workflow.make("Order", {
-	actions: [GetStatus],
+	actions: [GetStatus, Stop],
 	events: [StatusChanged],
 });

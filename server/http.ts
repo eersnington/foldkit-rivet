@@ -1,184 +1,187 @@
-import { readFile } from "node:fs/promises";
-import { createServer, type ServerResponse } from "node:http";
-import { extname, join, normalize } from "node:path";
-import { Effect, Layer } from "effect";
+import { createServer } from "node:http";
+import { join } from "node:path";
+import { NodeHttpServer } from "@effect/platform-node";
+import { Registry } from "@rivetkit/effect";
+import {
+	Clock,
+	Config,
+	Duration,
+	Effect,
+	Layer,
+	Option,
+	Redacted,
+	Schema,
+	SynchronizedRef,
+} from "effect";
+import {
+	FetchHttpClient,
+	HttpClient,
+	HttpClientRequest,
+	HttpClientResponse,
+	HttpRouter,
+	HttpServerRequest,
+	HttpServerResponse,
+	HttpStaticServer,
+} from "effect/http";
 
 const webRoot = join(import.meta.dirname, "../web/dist");
 
-const contentTypes: Record<string, string> = {
-	".html": "text/html; charset=utf-8",
-	".js": "text/javascript; charset=utf-8",
-	".css": "text/css; charset=utf-8",
-	".json": "application/json",
-	".svg": "image/svg+xml",
-	".map": "application/json",
-};
+const PublicRivet = Config.all({
+	endpoint: Config.String("PUBLIC_RIVET_ENDPOINT").pipe(
+		Config.withDefault("http://localhost:6420"),
+		Config.map((endpoint) => endpoint.replace(/\/$/, "")),
+	),
+	namespace: Config.String("PUBLIC_RIVET_NAMESPACE").pipe(
+		Config.withDefault("default"),
+	),
+});
 
-const publicEndpoint = () =>
-	(process.env.PUBLIC_RIVET_ENDPOINT ?? "http://localhost:6420").replace(/\/$/, "");
-const publicNamespace = () => process.env.PUBLIC_RIVET_NAMESPACE ?? "default";
+const TOKEN_DURATION = Duration.minutes(15);
+const TOKEN_RENEW_BEFORE_EXPIRY = Duration.minutes(1);
+/** A forced refresh cannot make the server issue more often than this. */
+const TOKEN_MIN_AGE_FOR_REFRESH = Duration.seconds(5);
+
+const IssuedTokenBody = Schema.Struct({
+	token: Schema.String,
+	expires_ts: Schema.Number,
+});
+
+interface IssuedToken {
+	readonly token: string;
+	readonly issuedAt: number;
+	readonly expiresAt: number;
+}
+
+const noStoreJson = (body: unknown, status = 200) =>
+	HttpServerResponse.jsonUnsafe(body, {
+		status,
+		headers: { "cache-control": "no-store" },
+	});
 
 /**
  * The browser reads the client config at runtime, so one image works on any
  * cluster. It has no token. The browser gets one from `/token`.
  */
-const clientConfig = () => ({
-	endpoint: publicEndpoint(),
-	namespace: publicNamespace(),
-});
+const ConfigRoute = Layer.unwrap(
+	Effect.map(PublicRivet, (rivet) =>
+		HttpRouter.add("GET", "/config.json", noStoreJson(rivet)),
+	),
+);
 
-const TOKEN_DURATION_SECONDS = 900;
-const TOKEN_RENEW_BEFORE_EXPIRY_MS = 60_000;
-/** A forced refresh cannot make the server issue more often than this. */
-const TOKEN_MIN_AGE_FOR_REFRESH_MS = 5_000;
-
-type IssuedToken = {
-	readonly token: string;
-	readonly issuedAt: number;
-	readonly expiresAt: number;
-};
-
-let cachedToken: IssuedToken | undefined;
-let pendingToken: Promise<IssuedToken> | undefined;
-
-/** Issues a scoped JWT for browsers with the admin token, which stays here. */
-const issueToken = async (adminToken: string): Promise<IssuedToken> => {
-	const response = await fetch(`${publicEndpoint()}/auth/tokens`, {
-		method: "POST",
-		headers: {
-			authorization: `Bearer ${adminToken}`,
-			"content-type": "application/json",
-		},
-		body: JSON.stringify({
-			namespace: publicNamespace(),
-			duration: TOKEN_DURATION_SECONDS,
-			grants: [
-				{
-					resource: "actor",
-					target: "any",
-					operations: ["create", "read", "list"],
-				},
-				{
-					resource: "actor_gateway",
-					target: "any",
-					operations: ["create", "read", "update", "delete", "list"],
-				},
-			],
-		}),
-	});
-	if (!response.ok) {
-		throw new Error(`control plane answered ${response.status}`);
-	}
-	const body = (await response.json()) as {
-		token?: unknown;
-		expires_ts?: unknown;
-	};
-	if (typeof body.token !== "string" || typeof body.expires_ts !== "number") {
-		throw new Error("control plane answered without a token");
-	}
-	return { token: body.token, issuedAt: Date.now(), expiresAt: body.expires_ts };
-};
-
-/** Page loads share one token until it is near its expiry. */
-const browserToken = (adminToken: string, forceRefresh: boolean) => {
-	const now = Date.now();
-	const isFresh =
-		cachedToken !== undefined &&
-		now < cachedToken.expiresAt - TOKEN_RENEW_BEFORE_EXPIRY_MS &&
-		!(forceRefresh && now - cachedToken.issuedAt > TOKEN_MIN_AGE_FOR_REFRESH_MS);
-	if (isFresh && cachedToken !== undefined) return Promise.resolve(cachedToken);
-	pendingToken ??= issueToken(adminToken)
-		.then((issued) => {
-			cachedToken = issued;
-			return issued;
-		})
-		.finally(() => {
-			pendingToken = undefined;
-		});
-	return pendingToken;
-};
-
-const sendJson = (
-	response: ServerResponse,
-	status: number,
-	body: unknown,
-) =>
-	response
-		.writeHead(status, {
-			"content-type": "application/json",
-			"cache-control": "no-store",
-		})
-		.end(JSON.stringify(body));
-
-const readStaticFile = async (urlPath: string) => {
-	// `normalize` on an absolute path removes `..`, so the file stays in webRoot.
-	const filePath = join(webRoot, normalize(urlPath));
-	try {
-		return { body: await readFile(filePath), type: extname(filePath) };
-	} catch {
-		return { body: await readFile(join(webRoot, "index.html")), type: ".html" };
-	}
-};
-
-const server = () =>
-	createServer(async (request, response) => {
-		const { pathname, searchParams } = new URL(request.url ?? "/", "http://localhost");
-		if (pathname === "/healthz") {
-			response.writeHead(200, { "content-type": "text/plain" }).end("ok");
-			return;
+/**
+ * Issues a scoped JWT for browsers with the admin token, which stays here.
+ * Page loads share one token until it is near its expiry. Without
+ * `RIVET_ADMIN_TOKEN`, it answers `{"token": null}`.
+ */
+const TokenRoute = Layer.unwrap(
+	Effect.gen(function* () {
+		const rivet = yield* PublicRivet;
+		const adminToken = yield* Config.option(
+			Config.Redacted("RIVET_ADMIN_TOKEN"),
+		);
+		if (Option.isNone(adminToken)) {
+			return HttpRouter.add("GET", "/token", noStoreJson({ token: null }));
 		}
-		if (pathname === "/config.json") {
-			sendJson(response, 200, clientConfig());
-			return;
-		}
-		if (pathname === "/token") {
-			const adminToken = process.env.RIVET_ADMIN_TOKEN;
-			if (!adminToken) {
-				sendJson(response, 200, { token: null });
-				return;
-			}
-			try {
-				const { token, expiresAt } = await browserToken(
-					adminToken,
-					searchParams.has("refresh"),
-				);
-				sendJson(response, 200, { token, expiresAt });
-			} catch (error) {
-				// The message has a status code only, never a token.
-				console.error(`token issue failed: ${(error as Error).message}`);
-				sendJson(response, 502, { error: "token issue failed" });
-			}
-			return;
-		}
-		try {
-			const file = await readStaticFile(
-				pathname === "/" ? "/index.html" : pathname,
+
+		const client = (yield* HttpClient.HttpClient).pipe(
+			HttpClient.filterStatusOk,
+		);
+		const issue = Effect.gen(function* () {
+			const response = yield* client.execute(
+				HttpClientRequest.post(`${rivet.endpoint}/auth/tokens`).pipe(
+					HttpClientRequest.bearerToken(Redacted.value(adminToken.value)),
+					HttpClientRequest.bodyJsonUnsafe({
+						namespace: rivet.namespace,
+						duration: Duration.toSeconds(TOKEN_DURATION),
+						grants: [
+							{
+								resource: "actor",
+								target: "any",
+								operations: ["create", "read", "list"],
+							},
+							{
+								resource: "actor_gateway",
+								target: "any",
+								operations: ["create", "read", "update", "delete", "list"],
+							},
+						],
+					}),
+				),
 			);
-			response
-				.writeHead(200, {
-					"content-type":
-						contentTypes[file.type] ?? "application/octet-stream",
-				})
-				.end(file.body);
-		} catch {
-			response.writeHead(404).end("web/dist is missing. Run `pnpm build`.");
-		}
-	});
+			// A decode error could echo the body, which holds the token.
+			const body = yield* HttpClientResponse.schemaBodyJson(IssuedTokenBody)(
+				response,
+			).pipe(
+				Effect.mapError(() => new Error("control plane answered without a token")),
+			);
+			const issuedAt = yield* Clock.currentTimeMillis;
+			return { token: body.token, issuedAt, expiresAt: body.expires_ts };
+		});
 
-/** Serves the built frontend, `/config.json`, `/token` and `/healthz`. */
-export const HttpLive = Layer.effectDiscard(
-	Effect.acquireRelease(
-		Effect.callback<ReturnType<typeof server>>((resume) => {
-			const port = Number(process.env.PORT ?? 8080);
-			const httpServer = server().listen(port, () => {
-				console.log(`http server listening on :${port}`);
-				resume(Effect.succeed(httpServer));
-			});
+		const cache = yield* SynchronizedRef.make(Option.none<IssuedToken>());
+		const isFresh = (cached: IssuedToken, now: number, forceRefresh: boolean) =>
+			now < cached.expiresAt - Duration.toMillis(TOKEN_RENEW_BEFORE_EXPIRY) &&
+			!(
+				forceRefresh &&
+				now - cached.issuedAt > Duration.toMillis(TOKEN_MIN_AGE_FOR_REFRESH)
+			);
+		// The ref runs one update at a time, so concurrent page loads share one issue.
+		const browserToken = (forceRefresh: boolean) =>
+			SynchronizedRef.modifyEffect(cache, (cached) =>
+				Effect.gen(function* () {
+					const now = yield* Clock.currentTimeMillis;
+					if (Option.isSome(cached) && isFresh(cached.value, now, forceRefresh)) {
+						return [cached.value, cached] as const;
+					}
+					const issued = yield* issue;
+					return [issued, Option.some(issued)] as const;
+				}),
+			);
+
+		return HttpRouter.add(
+			"GET",
+			"/token",
+			Effect.gen(function* () {
+				const params = yield* HttpServerRequest.ParsedSearchParams;
+				const { token, expiresAt } = yield* browserToken("refresh" in params);
+				return noStoreJson({ token, expiresAt });
+			}).pipe(
+				Effect.catch((error) =>
+					Effect.logError("token issue failed", error.message).pipe(
+						Effect.as(noStoreJson({ error: "token issue failed" }, 502)),
+					),
+				),
+			),
+		);
+	}),
+).pipe(Layer.provide(FetchHttpClient.layer));
+
+/** Serves the built frontend, `/config.json`, `/token` and `/health` on `PORT`. */
+export const AppServerLive = Layer.mergeAll(
+	HttpRouter.add("GET", "/health", Registry.health),
+	ConfigRoute,
+	TokenRoute,
+	HttpStaticServer.layer({ root: webRoot, spa: true }),
+).pipe(
+	HttpRouter.serve,
+	Layer.provide(
+		NodeHttpServer.layerConfig(createServer, {
+			port: Config.Port("PORT").pipe(Config.withDefault(8080)),
 		}),
-		(httpServer) =>
-			Effect.sync(() => {
-				httpServer.close();
-				httpServer.closeAllConnections();
-			}),
+	),
+);
+
+/** Serves `GET /metrics` on a private port. The cluster ships them with the logs. */
+export const MetricsServerLive = HttpRouter.add(
+	"GET",
+	"/metrics",
+	Registry.prometheusMetrics,
+).pipe(
+	(routes) => HttpRouter.serve(routes, { disableLogger: true }),
+	Layer.provide(
+		NodeHttpServer.layerConfig(createServer, {
+			host: Config.succeed("127.0.0.1"),
+			port: Config.Port("RIVETKIT_METRICS_PORT").pipe(Config.withDefault(9464)),
+		}),
 	),
 );

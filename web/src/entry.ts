@@ -1,9 +1,11 @@
 import { Runtime } from "foldkit";
 import {
 	Flags,
-	Model,
 	flags,
 	init,
+	managedResources,
+	Message,
+	Model,
 	resources,
 	subscriptions,
 	update,
@@ -18,7 +20,13 @@ const application = Runtime.makeApplication({
 	view,
 	subscriptions,
 	resources,
+	managedResources,
 	container: document.getElementById("root"),
+	routing: {
+		onUrlRequest: (request) => Message.ClickedLink({ request }),
+		onUrlChange: (url) => Message.ChangedUrl({ url }),
+	},
+	devTools: { Message },
 });
 
 Runtime.run(application, { flags });
