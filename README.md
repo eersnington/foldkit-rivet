@@ -24,6 +24,8 @@ pnpm build
 pnpm start:local   # http://localhost:8080
 ```
 
+Devtools: the overlay shows on `localhost` or with `?devtools`. For agents, run `pnpm dev:web` (port 8180, next to the running server) and point the agent at the MCP server on `http://127.0.0.1:4780/mcp`.
+
 ## Deploy
 
 ```sh

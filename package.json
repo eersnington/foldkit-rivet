@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build --config web/vite.config.ts",
+    "dev:web": "vite dev --config web/vite.config.ts",
     "start": "node server/main.ts",
     "start:local": "RIVET_RUN_ENGINE=1 node server/main.ts",
     "typecheck": "tsc --noEmit"
@@ -18,6 +19,8 @@
   "devDependencies": {
     "@effect/platform-browser": "4.1.5",
     "@effect/ui": "https://pkg.pr.new/Effect-TS/ui/@effect/ui@87a704b",
+    "@effect/ui-devtools": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-devtools@87a704b",
+    "@effect/ui-kit": "https://pkg.pr.new/Effect-TS/ui/@effect/ui-kit@87a704b",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.18.1",
     "tailwindcss": "^4.3.3",
